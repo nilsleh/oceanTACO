@@ -1,6 +1,6 @@
 # OceanTACO
 
-[![docs](https://app.readthedocs.org/projects/ocean-taco/badge/?version=latest)](https://ocean-taco.readthedocs.io/en/latest/)
+[![docs](https://app.readthedocs.org/projects/oceantaco/badge/?version=latest)](https://oceantaco.readthedocs.io/en/latest/)
 [![pypi](https://badge.fury.io/py/oceantaco.svg)](https://pypi.org/project/ocean-taco/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Language: Python](https://img.shields.io/badge/language-Python%203.11%2B-green?logo=python&logoColor=green)](https://www.python.org)
