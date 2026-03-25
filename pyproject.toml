@@ -1,0 +1,116 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ocean_taco"
+version = "0.1.0"
+description = "Dataset for various applications around Sea State Estimation"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Nils Lehmann", email = "n.lehmann@tum.de" }]
+maintainers = [{ name = "Nils Lehmann", email = "n.lehmann@tum.de" }]
+keywords = ["climate", "assimilation", "earth-observation", "altimetry", "dataset"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "matplotlib>=3.10",
+    "numpy>=2.3.3",
+    "pandas>=2.2",
+    "requests>=2.31",
+    "torch>=2.2",
+    "tqdm>=4.66",
+    "xarray>=2025.11.0",
+    "cartopy>=0.23.0",
+    "tacoreader>=2.4.20",
+    "polars>=1.32.3",
+    "antimeridian>=0.4.5",
+    "pyresample>=1.35.0",
+    "shapely>=2.0",
+    "omegaconf>=2.3",
+    "lightning>=2.0",
+    "typer>=0.12",
+    "rich>=13.0",
+    "geopandas>=1.0",
+    "rasterio>=1.3"
+]
+
+[project.optional-dependencies]
+generate = [
+    "argopy",
+    "copernicusmarine>=2.2.1",
+    "earthaccess>=0.14.0",
+    "tacotoolbox>=0.26.1",
+    "scipy>=1.12",
+]
+hf = [
+    "datasets>=2.19",
+    "huggingface_hub>=0.24",
+]
+tests = [
+    "pytest>=8.0",
+    "ruff>=0.9",
+]
+docs = [
+    "sphinx>=7.4",
+    "sphinx-book-theme>=1.1",
+    "myst-nb>=1.1",
+    "sphinx-copybutton>=0.5",
+    "sphinx-autodoc-typehints>=2.0",
+]
+
+[project.urls]
+Repository = "https://github.com/nilsleh/oceanTACO"
+Issues = "https://github.com/nilsleh/oceanTACO/issues"
+
+[tool.setuptools.packages.find]
+# Search from repo root (.) and include the ocean_taco package
+where = ["."]
+include = ["ocean_taco*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+ocean_taco = ["py.typed"]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not slow'"
+filterwarnings = []
+markers = [
+    "slow: marks tests as slow (requires network access; deselected by default)",
+]
+
+[tool.env]
+USE_IOMP = "0"
+
+[tool.mypy]
+ignore_missing_imports = true
+exclude = "(dist|docs|requirements|.*egg-info)/"
+
+[tool.ruff]
+extend-include = ["*.ipynb"]
+fix = true
+
+[tool.ruff.format]
+skip-magic-trailing-comma = true
+
+[tool.ruff.lint]
+extend-select = ["D", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"docs/**" = ["D"]
+"tests/**" = ["D"]
+
+[tool.ruff.lint.isort]
+split-on-trailing-comma = false
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

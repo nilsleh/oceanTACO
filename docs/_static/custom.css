@@ -1,0 +1,7 @@
+/* Minor style adjustments for OceanTACO docs */
+
+/* Slightly tighter table spacing */
+.wy-table-responsive table td,
+.wy-table-responsive table th {
+    white-space: normal;
+}
