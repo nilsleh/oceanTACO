@@ -10,7 +10,7 @@ OceanTACO supports two complementary access patterns:
 ## Prerequisites
 
 - Python 3.11+
-- Conda (recommended) or pip
+- Conda or pip
 
 ## Installation
 
