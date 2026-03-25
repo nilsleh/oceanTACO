@@ -37,6 +37,12 @@ conda activate testpy311
 pip install -e ".[hf]"
 ```
 
+If you prefer installing directly from the public GitHub `main` branch:
+
+```sh
+pip install "ocean_taco[hf] @ git+https://github.com/nilsleh/oceanTACO.git@main"
+```
+
 ## Choose the Right Workflow
 
 Use this quick rule:

@@ -20,6 +20,12 @@ pip install -e ".[hf]"
 pip install -e ".[generate,hf,tests]"
 ```
 
+Or install directly from the public GitHub `main` branch (with HuggingFace extras):
+
+```sh
+pip install "ocean_taco[hf] @ git+https://github.com/nilsleh/oceanTACO.git@main"
+```
+
 ## Repository Structure
 
 - `ocean_taco/dataset/`: main user API for loading data and generating queries.

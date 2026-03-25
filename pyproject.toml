@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "Nils Lehmann", email = "n.lehmann@tum.de" }]
 maintainers = [{ name = "Nils Lehmann", email = "n.lehmann@tum.de" }]
-keywords = ["climate", "assimilation", "earth-observation", "altimetry", "dataset"]
+keywords = ["climate", "assimilation", "earth-observation", "altimetry", "dataset", "ocean", "machine-learning"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",

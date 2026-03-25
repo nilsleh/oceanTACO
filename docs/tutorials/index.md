@@ -14,7 +14,7 @@ To run the notebooks yourself:
 
 ```sh
 conda activate testpy311
-pip install "git+https://github.com/nilsleh/oceanTACO.git#egg=ocean_taco[hf]"
+pip install "ocean_taco[hf] @ git+https://github.com/nilsleh/oceanTACO.git@main"
 jupyter lab notebooks/
 ```
 
