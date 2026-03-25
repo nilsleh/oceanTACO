@@ -25,6 +25,7 @@ jupyter lab notebooks/
 :caption: Tutorials
 
 ml_dataset
+data_retrieval_workflows
 spatio_temporal_query_generation
 plot_hurricane_milton
 plot_hurricane_milton_cross_product
