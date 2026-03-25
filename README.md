@@ -1,6 +1,22 @@
 # OceanTACO
 
+[![docs](https://app.readthedocs.org/projects/ocean-taco/badge/?version=latest)](https://torchgeo.readthedocs.io/en/stable/)
+[![pypi](https://badge.fury.io/py/oceantaco.svg)](https://pypi.org/project/ocean-taco/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Language: Python](https://img.shields.io/badge/language-Python%203.11%2B-green?logo=python&logoColor=green)](https://www.python.org)
+
+
 OceanTACO is a multi-source sea surface variable dataset with dataloaders for machine learning workflows.
+
+<img src="docs/images/oceantaco.svg" alt="OceanTACO Figure" width="760" />
+
+Generated directly from OceanTACO sources (GLORYS SST, SSH L4, SSH SWOT, SST L4, SSS L4, Argo).
+
+To regenerate the README figure:
+
+```sh
+python ocean_taco/viz/readme_figure.py --date 2025-03-04
+```
 
 ## Installation
 
