@@ -1,12 +1,22 @@
 # OceanTACO
 
-[![docs](https://app.readthedocs.org/projects/ocean-taco/badge/?version=latest)](https://torchgeo.readthedocs.io/en/stable/)
+[![docs](https://app.readthedocs.org/projects/ocean-taco/badge/?version=latest)](https://ocean-taco.readthedocs.io/en/latest/)
 [![pypi](https://badge.fury.io/py/oceantaco.svg)](https://pypi.org/project/ocean-taco/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Language: Python](https://img.shields.io/badge/language-Python%203.11%2B-green?logo=python&logoColor=green)](https://www.python.org)
 
 
 OceanTACO is a multi-source sea surface variable dataset for Earth-system analysis workflows and also provides dataloaders for machine learning workflows.
+
+Documentation page: https://ocean-taco.readthedocs.io/en/latest/
+
+Current dataset coverage includes:
+
+- Sea surface height (SSH): L4, L3, SWOT L3
+- Sea surface temperature (SST): L4, L3, GLORYS
+- Sea surface salinity (SSS): L4, L3 SMOS
+- Argo float profile observations (point-source)
+- Additional co-located sources including wind and GLORYS currents
 
 <img src="docs/images/oceantaco.svg" alt="OceanTACO Figure" width="760" />
 
@@ -18,9 +28,37 @@ To regenerate the README figure:
 python ocean_taco/viz/readme_figure.py --date 2025-03-04
 ```
 
+## Documentation and Notebooks
+
+If you are new to OceanTACO, start with the hosted documentation and tutorials:
+
+- Documentation home: https://ocean-taco.readthedocs.io/en/latest/
+- Getting started guide: https://ocean-taco.readthedocs.io/en/latest/getting_started.html
+- Dataset workflows: https://ocean-taco.readthedocs.io/en/latest/dataset-workflows.html
+- ML dataset loader guide: https://ocean-taco.readthedocs.io/en/latest/dataset-ml-loader.html
+- Tutorial notebooks index: https://ocean-taco.readthedocs.io/en/latest/tutorials/index.html
+
+OceanTACO includes several tutorial notebooks in the docs, with rendered outputs and downloadable `.ipynb` files, so you can get started quickly before writing your own workflows.
+
 ## Installation
 
-From the repository root, we provide different dependency groups depending on what workflows you are interested in
+Most users should install directly from PyPI:
+
+```sh
+# Core package
+pip install ocean-taco
+
+# With Hugging Face helpers
+pip install "ocean-taco[hf]"
+```
+
+If you want the latest development version from GitHub:
+
+```sh
+pip install "ocean_taco[hf] @ git+https://github.com/nilsleh/oceanTACO.git@main"
+```
+
+If you have cloned this repository and want a local editable install, run the following from the repository root:
 
 ```sh
 # Dataset loading + queries + visualization (default profile)
@@ -34,12 +72,6 @@ pip install -e ".[hf]"
 
 # Full development profile
 pip install -e ".[generate,hf,tests]"
-```
-
-Or install directly from the public GitHub `main` branch (with HuggingFace extras):
-
-```sh
-pip install "ocean_taco[hf] @ git+https://github.com/nilsleh/oceanTACO.git@main"
 ```
 
 ## Repository Structure
@@ -110,42 +142,8 @@ print(local_dir)
 For full examples (query save/load, train/eval dataloaders, patch-size recipes, and troubleshooting), see:
 
 - `docs/dataset-workflows.md`
+- `docs/tutorials/index.md`
 
-## Documentation
-
-OceanTACO uses Sphinx for project documentation.
-
-Install docs dependencies:
-
-```sh
-pip install -e ".[docs]"
-```
-
-Build the docs locally:
-
-```sh
-make docs-build
-```
-
-The generated HTML site is written to:
-
-- `docs/_build/html/`
-
-Serve the built docs locally:
-
-```sh
-make docs-serve
-```
-
-Then open:
-
-- `http://localhost:8080`
-
-Clean docs build artifacts:
-
-```sh
-make docs-clean
-```
 ## CODE LICENSE
 
 The Code is licensed under Apache - 2.0.

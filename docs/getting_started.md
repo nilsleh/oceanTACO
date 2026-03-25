@@ -14,7 +14,23 @@ OceanTACO supports two complementary access patterns:
 
 ## Installation
 
-From the repository root, choose the dependency profile that matches your use case:
+Most users should install directly from PyPI:
+
+```sh
+# Core package
+pip install ocean-taco
+
+# With HuggingFace helpers
+pip install "ocean-taco[hf]"
+```
+
+If you want the latest development version from GitHub:
+
+```sh
+pip install "ocean_taco[hf] @ git+https://github.com/nilsleh/oceanTACO.git@main"
+```
+
+If you have cloned this repository and want a local editable install, run the following from the repository root:
 
 ```sh
 # Dataset loading + queries + visualization (default)
@@ -28,19 +44,6 @@ pip install -e ".[generate]"
 
 # Full development profile
 pip install -e ".[generate,hf,tests]"
-```
-
-If using conda:
-
-```sh
-conda activate testpy311
-pip install -e ".[hf]"
-```
-
-If you prefer installing directly from the public GitHub `main` branch:
-
-```sh
-pip install "ocean_taco[hf] @ git+https://github.com/nilsleh/oceanTACO.git@main"
 ```
 
 ## Choose the Right Workflow
