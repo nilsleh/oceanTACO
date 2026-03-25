@@ -125,6 +125,28 @@ Clean docs build artifacts:
 make docs-clean
 ```
 
+## PyPI Publishing
+
+This repository includes automated publishing workflows using Trusted Publishing (OIDC):
+
+- `.github/workflows/publish-testpypi.yml` for manual TestPyPI releases
+- `.github/workflows/publish-pypi.yml` for PyPI releases on GitHub Release publish
+
+One-time setup:
+
+1. Create the project on TestPyPI and PyPI (or reserve the name).
+2. In TestPyPI and PyPI, configure a Trusted Publisher for:
+	- owner: `nilsleh`
+	- repository: `oceanTACO`
+	- workflow files: `publish-testpypi.yml` and `publish-pypi.yml`
+3. Ensure GitHub environments `testpypi` and `pypi` exist (recommended for approval gates).
+
+Release flow:
+
+1. Update `version` in `pyproject.toml`.
+2. Run TestPyPI publish manually from GitHub Actions (`Publish to TestPyPI`).
+3. Create a GitHub Release to trigger production PyPI publish (`Publish to PyPI`).
+
 ## CODE LICENSE
 
 The Code is licensed under Apache - 2.0.
