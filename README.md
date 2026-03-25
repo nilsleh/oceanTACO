@@ -6,7 +6,7 @@
 [![Language: Python](https://img.shields.io/badge/language-Python%203.11%2B-green?logo=python&logoColor=green)](https://www.python.org)
 
 
-OceanTACO is a multi-source sea surface variable dataset with dataloaders for machine learning workflows.
+OceanTACO is a multi-source sea surface variable dataset for Earth-system analysis workflows and also provides dataloaders for machine learning workflows.
 
 <img src="docs/images/oceantaco.svg" alt="OceanTACO Figure" width="760" />
 
@@ -176,3 +176,6 @@ The Code is licensed under Apache - 2.0.
 ## DATASET LICENSE
 
 OceanTACO is released under Creative Commons Attribution 4.0 International (CC BY 4.0). However, please see the [OceanTACO Dataset Card](https://huggingface.co/datasets/nilsleh/OceanTACO) for full license information, and required attribution, acknowledgements and citations.
+
+## Citation
+In Progress.
