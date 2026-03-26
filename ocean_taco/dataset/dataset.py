@@ -630,6 +630,11 @@ class OceanTACODataset(Dataset):
             data = data[-1]
             var_label += " (t=-1)"
 
+        # Dynamically set vmin/vmax from data, fallback to defaults if not set
+        finite_data = data[np.isfinite(data)]
+        vmin = np.nanmin(finite_data)
+        vmax = np.nanmax(finite_data)
+
         # Plot based on data shape
         if data.ndim == 2 and lats.ndim == 1:
             # Gridded data
@@ -639,8 +644,8 @@ class OceanTACODataset(Dataset):
                 data,
                 transform=ccrs.PlateCarree(),
                 cmap=cmap_params["cmap"],
-                vmin=cmap_params["vmin"],
-                vmax=cmap_params["vmax"],
+                vmin=vmin,
+                vmax=vmax,
                 rasterized=True,
                 shading="gouraud" if "l3_swot" in var_lower else "auto",
             )
@@ -652,8 +657,8 @@ class OceanTACODataset(Dataset):
                 c=data,
                 transform=ccrs.PlateCarree(),
                 cmap=cmap_params["cmap"],
-                vmin=cmap_params["vmin"],
-                vmax=cmap_params["vmax"],
+                vmin=vmin,
+                vmax=vmax,
                 s=10,
                 alpha=0.8,
             )
@@ -693,7 +698,7 @@ def _get_colormap_params(var_name: str) -> dict:
     var_lower = var_name.lower()
 
     if "ssh" in var_lower or "swot" in var_lower or "sla" in var_lower:
-        return {"vmin": -1.0, "vmax": 1.0, "cmap": "RdBu_r", "label": "SSH (m)"}
+        return {"vmin": -0.6, "vmax": 0.6, "cmap": "RdBu_r", "label": "SSH (m)"}
     elif "sst" in var_lower or "temp" in var_lower:
         return {"vmin": 0, "vmax": 40, "cmap": "RdYlBu_r", "label": "SST (°C)"}
     elif "sss" in var_lower or "sal" in var_lower:
