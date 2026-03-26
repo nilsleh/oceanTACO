@@ -18,6 +18,8 @@ Current dataset coverage includes:
 - Argo float profile observations (point-source)
 - Additional co-located sources including wind and GLORYS currents
 
+The Core dataset spans 2023-03-29 until 2025-08-01 and includes the SWOT data. It is available on [Hugging Face](https://huggingface.co/datasets/nilsleh/OceanTACO). The extended dataset spans 2015-01-01 until 2023-03-29 but preceeds the SWOT era and is available on [Hugging Face](https://huggingface.co/datasets/nilsleh/OceanTACO_extended).
+
 <img src="docs/images/oceantaco.svg" alt="OceanTACO Figure" width="760" />
 
 Generated directly from OceanTACO sources (GLORYS SST, SSH L4, SSH SWOT, SST L4, SSS L4, Argo).
@@ -32,11 +34,11 @@ python ocean_taco/viz/readme_figure.py --date 2025-03-04
 
 If you are new to OceanTACO, start with the hosted documentation and tutorials:
 
-- Documentation home: https://ocean-taco.readthedocs.io/en/latest/
-- Getting started guide: https://ocean-taco.readthedocs.io/en/latest/getting_started.html
-- Dataset workflows: https://ocean-taco.readthedocs.io/en/latest/dataset-workflows.html
-- ML dataset loader guide: https://ocean-taco.readthedocs.io/en/latest/dataset-ml-loader.html
-- Tutorial notebooks index: https://ocean-taco.readthedocs.io/en/latest/tutorials/index.html
+- Documentation home: https://oceantaco.readthedocs.io/en/latest/
+- Getting started guide: https://oceantaco.readthedocs.io/en/latest/getting_started.html
+- Dataset workflows: https://oceantaco.readthedocs.io/en/latest/dataset-workflows.html
+- ML dataset loader guide: https://oceantaco.readthedocs.io/en/latest/dataset-ml-loader.html
+- Tutorial notebooks index: https://oceantaco.readthedocs.io/en/latest/tutorials/index.html
 
 OceanTACO includes several tutorial notebooks in the docs, with rendered outputs and downloadable `.ipynb` files, so you can get started quickly before writing your own workflows.
 
