@@ -295,12 +295,15 @@ class GridMerger:
             len(self.target_lats) - 1,
         )
 
-        for i, li in enumerate(lat_idx[: data.shape[0]]):
-            for j, lj in enumerate(lon_idx[: data.shape[1]]):
-                val = data[i, j]
-                if np.isfinite(val):
-                    self._sum[li, lj] += val
-                    self._count[li, lj] += 1
+        # Vectorized scatter-add (replaces O(H×W) Python loop)
+        li, lj = np.meshgrid(
+            lat_idx[: data.shape[0]],
+            lon_idx[: data.shape[1]],
+            indexing="ij",
+        )
+        valid = np.isfinite(data)
+        np.add.at(self._sum, (li[valid], lj[valid]), data[valid])
+        np.add.at(self._count, (li[valid], lj[valid]), 1)
 
     def result(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         with np.errstate(invalid="ignore"):
