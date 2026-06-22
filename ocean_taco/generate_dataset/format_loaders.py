@@ -3,8 +3,23 @@
 import glob
 import os
 from datetime import datetime
+from pathlib import Path
 
 import xarray as xr
+
+
+def _open_benchmark_subset_file(data_dir: str, modality: str, date_str: str):
+    """Open one benchmark-subset raw file if present."""
+    year, month = date_str[:4], date_str[4:6]
+    path = (
+        Path(data_dir)
+        / modality
+        / "benchmark_subset"
+        / year
+        / month
+        / f"{modality}_{date_str}.nc"
+    )
+    return xr.open_dataset(path) if path.exists() else None
 
 
 def load_glorys_data(data_dir, date_str):
@@ -22,7 +37,9 @@ def load_glorys_data(data_dir, date_str):
     pattern = os.path.join(glorys_dir, f"mercatorglorys12v1_gl12_mean_{date_str}_R*.nc")
     files = glob.glob(pattern)
 
-    return xr.open_dataset(files[0]) if files else None
+    if files:
+        return xr.open_dataset(files[0])
+    return _open_benchmark_subset_file(data_dir, "glorys", date_str)
 
 
 def load_l4_ssh_data(data_dir, date_str):
@@ -40,7 +57,9 @@ def load_l4_ssh_data(data_dir, date_str):
     pattern = f"dt_global_allsat_phy_l4_{date_str}_*.nc"
     l4_dir = os.path.join(data_dir, "l4_ssh", subdir, year, month)
     files = glob.glob(os.path.join(l4_dir, pattern))
-    return xr.open_dataset(files[0]) if files else None
+    if files:
+        return xr.open_dataset(files[0])
+    return _open_benchmark_subset_file(data_dir, "l4_ssh", date_str)
 
 
 def load_l4_sst_data(data_dir, date_str):
@@ -69,11 +88,13 @@ def load_l4_sst_data(data_dir, date_str):
 
     dataset_dirs = glob.glob(os.path.join(data_dir, "l4_sst", product, dataset_glob))
     if not dataset_dirs:
-        return None
+        return _open_benchmark_subset_file(data_dir, "l4_sst", date_str)
     dataset_dir = sorted(dataset_dirs)[-1]
     l4_dir = os.path.join(dataset_dir, year, month)
     files = glob.glob(os.path.join(l4_dir, fname_pattern))
-    return xr.open_dataset(files[0]) if files else None
+    if files:
+        return xr.open_dataset(files[0])
+    return _open_benchmark_subset_file(data_dir, "l4_sst", date_str)
 
 
 def load_l4_sss_data(data_dir, date_str):
@@ -112,7 +133,7 @@ def load_l4_sss_data(data_dir, date_str):
             if files:
                 return xr.open_dataset(files[0])
 
-    return None
+    return _open_benchmark_subset_file(data_dir, "l4_sss", date_str)
 
 
 def load_l4_wind_data(data_dir, date_str):

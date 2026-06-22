@@ -11,6 +11,13 @@ from pathlib import Path
 
 import pandas as pd
 
+from ocean_taco.benchmarks.climatebenchpress.config import (
+    DEFAULT_BENCHMARK_MODALITIES,
+)
+from ocean_taco.benchmarks.climatebenchpress.export_subset import (
+    BenchmarkTileExporter,
+    write_manifest,
+)
 from ocean_taco.generate_dataset.format_loaders import (
     load_glorys_data,
     load_l3_sst_data,
@@ -23,8 +30,10 @@ from ocean_taco.generate_dataset.format_processors import (
     process_and_split,
     process_argo_data,
     process_glorys_data,
-    process_l3_ssh_data,
     process_l3_sss_smos_data,
+)
+from ocean_taco.generate_dataset.new_format_ssh_data import (
+    process_l3_ssh_data,
     process_swot_daily_gridded,
 )
 
@@ -41,16 +50,36 @@ def process_date(
     include_l3_ssh=True,
     include_argo=True,
     only_vars=None,
+    benchmark_root=None,
+    benchmark_modalities=None,
+    benchmark_regions=None,
+    benchmark_date_min=None,
+    benchmark_date_max=None,
+    benchmark_overwrite=False,
 ):
     """Process all data sources for a single date."""
     logging.info(f"Processing date: {date_str}")
     all_records = []
+    benchmark_exporter = None
+
+    if benchmark_root:
+        benchmark_exporter = BenchmarkTileExporter.from_args(
+            root=benchmark_root,
+            modalities=benchmark_modalities,
+            regions=benchmark_regions,
+            date_min=benchmark_date_min,
+            date_max=benchmark_date_max,
+            overwrite=benchmark_overwrite,
+        )
 
     processors = [
         (
             "glorys",
             lambda: process_glorys_data(
-                load_glorys_data(data_dir, date_str), date_str, output_dir
+                load_glorys_data(data_dir, date_str),
+                date_str,
+                output_dir,
+                benchmark_exporter=benchmark_exporter,
             ),
         ),
         (
@@ -61,6 +90,7 @@ def process_date(
                 output_dir,
                 "l4_ssh",
                 sensor="L4_SSH",
+                benchmark_exporter=benchmark_exporter,
             ),
         ),
         (
@@ -71,6 +101,7 @@ def process_date(
                 output_dir,
                 "l4_sst",
                 sensor="L4_SST",
+                benchmark_exporter=benchmark_exporter,
             ),
         ),
         (
@@ -81,6 +112,7 @@ def process_date(
                 output_dir,
                 "l4_sss",
                 sensor="L4_SSS",
+                benchmark_exporter=benchmark_exporter,
             ),
         ),
         (
@@ -91,6 +123,7 @@ def process_date(
                 output_dir,
                 "l4_wind",
                 sensor="L4_WIND",
+                benchmark_exporter=benchmark_exporter,
             ),
         ),
         (
@@ -101,6 +134,7 @@ def process_date(
                 output_dir,
                 "l3_sst",
                 sensor="L3_SST",
+                benchmark_exporter=benchmark_exporter,
             ),
         ),
         (
@@ -193,6 +227,34 @@ def main():
         action="store_true",
         help="Update existing inventory file instead of overwriting",
     )
+    parser.add_argument(
+        "--benchmark-export-root",
+        help="Optional root directory for pre-encoding benchmark tile export.",
+    )
+    parser.add_argument(
+        "--benchmark-modalities",
+        nargs="+",
+        choices=sorted(DEFAULT_BENCHMARK_MODALITIES),
+        help="Benchmark-export only these regular-grid modalities.",
+    )
+    parser.add_argument(
+        "--benchmark-regions",
+        nargs="+",
+        help="Benchmark-export only these region names.",
+    )
+    parser.add_argument(
+        "--benchmark-date-min",
+        help="Optional lower benchmark-export date bound (YYYY-MM-DD or YYYYMMDD).",
+    )
+    parser.add_argument(
+        "--benchmark-date-max",
+        help="Optional upper benchmark-export date bound (YYYY-MM-DD or YYYYMMDD).",
+    )
+    parser.add_argument(
+        "--benchmark-overwrite",
+        action="store_true",
+        help="Overwrite existing benchmark-export tiles and metadata.",
+    )
     args = parser.parse_args()
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
@@ -207,6 +269,12 @@ def main():
         include_l3_ssh=args.include_l3_ssh,
         include_argo=args.include_argo,
         only_vars=args.only_vars,
+        benchmark_root=args.benchmark_export_root,
+        benchmark_modalities=args.benchmark_modalities,
+        benchmark_regions=args.benchmark_regions,
+        benchmark_date_min=args.benchmark_date_min,
+        benchmark_date_max=args.benchmark_date_max,
+        benchmark_overwrite=args.benchmark_overwrite,
     )
 
     if args.processes > 1:
@@ -267,6 +335,9 @@ def main():
             )
 
     create_inventory(all_records, os.path.join(args.output_dir, args.inventory_path))
+    if args.benchmark_export_root:
+        manifest_path = write_manifest(args.benchmark_export_root)
+        logging.info(f"✓ Benchmark manifest saved: {manifest_path}")
     logging.info("✓ Done!")
 
 

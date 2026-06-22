@@ -3,14 +3,25 @@
 
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
-import argopy
-import copernicusmarine
 import pandas as pd
 import xarray as xr
-from argopy import DataFetcher as ArgoDataFetcher
+
+try:
+    import argopy
+    from argopy import DataFetcher as ArgoDataFetcher
+except ImportError:  # pragma: no cover - optional dependency
+    argopy = None
+    ArgoDataFetcher = None
+
+try:
+    import copernicusmarine
+except ImportError:  # pragma: no cover - optional dependency
+    copernicusmarine = None
 
 from ocean_taco.generate_dataset.download_date_filters import (
     create_copernicus_glorys_date_filter,
@@ -24,17 +35,275 @@ from ocean_taco.generate_dataset.download_date_filters import (
 from ocean_taco.generate_dataset.download_tracker import DownloadTracker
 
 
+@dataclass(frozen=True)
+class BenchmarkSubsetSpec:
+    """Subset-download configuration for one benchmark modality."""
+
+    modality: str
+    dataset_id: str
+    filename_prefix: str
+    default_variables: tuple[str, ...]
+
+
+BENCHMARK_SUBSET_SPECS: dict[str, BenchmarkSubsetSpec] = {
+    "glorys": BenchmarkSubsetSpec(
+        modality="glorys",
+        dataset_id="cmems_mod_glo_phy_my_0.083deg_P1D-m",
+        filename_prefix="glorys",
+        default_variables=("zos",),
+    ),
+    "l4_ssh": BenchmarkSubsetSpec(
+        modality="l4_ssh",
+        dataset_id="cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D",
+        filename_prefix="l4_ssh",
+        default_variables=("sla",),
+    ),
+    "l4_sst": BenchmarkSubsetSpec(
+        modality="l4_sst",
+        dataset_id="METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2",
+        filename_prefix="l4_sst",
+        default_variables=("analysed_sst",),
+    ),
+    "l4_sss": BenchmarkSubsetSpec(
+        modality="l4_sss",
+        dataset_id="cmems_obs-mob_glo_phy-sss_nrt_multi_P1D",
+        filename_prefix="l4_sss",
+        default_variables=("sos",),
+    ),
+    "l4_wind": BenchmarkSubsetSpec(
+        modality="l4_wind",
+        dataset_id="cmems_obs-wind_glo_phy_my_l4_0.125deg_PT1H",
+        filename_prefix="l4_wind",
+        default_variables=("eastward_wind",),
+    ),
+}
+
+BENCHMARK_SUBSET_MODALITIES = tuple(BENCHMARK_SUBSET_SPECS)
+
+
+def _require_copernicusmarine() -> Any:
+    """Return the copernicusmarine client or raise a clear error."""
+    if copernicusmarine is None:
+        raise RuntimeError(
+            "copernicusmarine is required for download operations. "
+            "Install the optional 'generate' dependencies first."
+        )
+    return copernicusmarine
+
+
+def _require_argopy() -> tuple[Any, Any]:
+    """Return argopy modules or raise a clear error."""
+    if argopy is None or ArgoDataFetcher is None:
+        raise RuntimeError(
+            "argopy is required for Argo downloads. "
+            "Install the optional 'generate' dependencies first."
+        )
+    return argopy, ArgoDataFetcher
+
+
+def _iter_date_strings(date_min: str, date_max: str) -> list[str]:
+    """Return inclusive YYYYMMDD date strings."""
+    start_dt = datetime.strptime(date_min, "%Y-%m-%d")
+    end_dt = datetime.strptime(date_max, "%Y-%m-%d")
+    dates = []
+    current = start_dt
+    while current <= end_dt:
+        dates.append(current.strftime("%Y%m%d"))
+        current += timedelta(days=1)
+    return dates
+
+
+def _benchmark_subset_output_path(root_dir: str, modality: str, date_str: str) -> Path:
+    """Return one benchmark-subset raw file path compatible with loader fallbacks."""
+    year = date_str[:4]
+    month = date_str[4:6]
+    return (
+        Path(root_dir)
+        / modality
+        / "benchmark_subset"
+        / year
+        / month
+        / f"{modality}_{date_str}.nc"
+    )
+
+
+def _resolve_subset_spec_for_date(modality: str, date_str: str) -> BenchmarkSubsetSpec:
+    """Return the correct per-day subset collection for one modality."""
+    if modality == "l4_sst":
+        date_obj = datetime.strptime(date_str, "%Y%m%d")
+        if date_obj < datetime(2024, 1, 16):
+            return BenchmarkSubsetSpec(
+                modality="l4_sst",
+                dataset_id="METOFFICE-GLO-SST-L4-REP-OBS-SST",
+                filename_prefix="l4_sst",
+                default_variables=("analysed_sst",),
+            )
+        return BENCHMARK_SUBSET_SPECS["l4_sst"]
+
+    if modality == "l4_sss":
+        date_obj = datetime.strptime(date_str, "%Y%m%d")
+        if date_obj <= datetime(2022, 12, 31):
+            return BenchmarkSubsetSpec(
+                modality="l4_sss",
+                dataset_id="cmems_obs-mob_glo_phy-sss_my_multi_P1D",
+                filename_prefix="l4_sss",
+                default_variables=("sos",),
+            )
+        return BENCHMARK_SUBSET_SPECS["l4_sss"]
+
+    return BENCHMARK_SUBSET_SPECS[modality]
+
+
+def _download_copernicus_daily_subset(
+    *,
+    modality: str,
+    date_min: str,
+    date_max: str,
+    root_dir: str,
+    tracker: DownloadTracker,
+    bbox: tuple[float, float, float, float],
+    variables: list[str] | None = None,
+    dry_run: bool = True,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Download a small daily subset series for one regular-grid modality."""
+    client = _require_copernicusmarine()
+    lon_min, lon_max, lat_min, lat_max = bbox
+    date_strings = _iter_date_strings(date_min, date_max)
+    results: dict[str, Any] = {}
+    files_found = 0
+
+    for date_str in date_strings:
+        spec = _resolve_subset_spec_for_date(modality, date_str)
+        chosen_variables = variables or list(spec.default_variables)
+        output_path = _benchmark_subset_output_path(root_dir, modality, date_str)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        start_datetime = f"{date_str}T00:00:00"
+        end_datetime = f"{date_str}T23:59:59"
+
+        tracker.logger.info(
+            "  %s subset %s bbox=%s variables=%s -> %s",
+            modality,
+            date_str,
+            bbox,
+            chosen_variables,
+            output_path,
+        )
+
+        response = client.subset(
+            dataset_id=spec.dataset_id,
+            variables=chosen_variables,
+            minimum_longitude=lon_min,
+            maximum_longitude=lon_max,
+            minimum_latitude=lat_min,
+            maximum_latitude=lat_max,
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+            output_filename=output_path.name,
+            output_directory=output_path.parent,
+            file_format="netcdf",
+            skip_existing=not overwrite,
+            overwrite=overwrite,
+            dry_run=dry_run,
+        )
+        results[date_str] = response
+
+        if dry_run:
+            files = getattr(response, "files", None)
+            files_found += len(files) if files is not None else 1
+        else:
+            files_found += int(output_path.exists())
+
+    tracker.log_download_attempt(
+        f"{modality}_benchmark_subset",
+        (date_min, date_max),
+        "success",
+        {
+            "bbox": list(bbox),
+            "variables": variables or list(_resolve_subset_spec_for_date(modality, date_strings[0]).default_variables),
+            "days": len(date_strings),
+            "files_found": files_found,
+        },
+    )
+    return results
+
+
+def download_benchmark_subset_data(
+    date_min: str,
+    date_max: str,
+    root_dir: str,
+    tracker: DownloadTracker,
+    *,
+    sources: list[str],
+    bbox: tuple[float, float, float, float],
+    variables_by_source: dict[str, list[str]] | None = None,
+    dry_run: bool = True,
+    overwrite: bool = False,
+) -> dict[str, dict[str, Any]]:
+    """Download a tiny Copernicus subset for benchmark-ready regular-grid sources."""
+    variables_by_source = variables_by_source or {}
+    unsupported = sorted(set(sources) - set(BENCHMARK_SUBSET_MODALITIES))
+    if unsupported:
+        raise ValueError(
+            "Benchmark subset downloads only support regular-grid modalities: "
+            f"{', '.join(BENCHMARK_SUBSET_MODALITIES)}. Unsupported: {unsupported}"
+        )
+
+    results: dict[str, dict[str, Any]] = {}
+    for modality in sources:
+        tracker.logger.info(
+            "%sPreparing benchmark subset download for %s%s",
+            "[DRY RUN] " if dry_run else "",
+            modality,
+            "",
+        )
+        results[modality] = _download_copernicus_daily_subset(
+            modality=modality,
+            date_min=date_min,
+            date_max=date_max,
+            root_dir=root_dir,
+            tracker=tracker,
+            bbox=bbox,
+            variables=variables_by_source.get(modality),
+            dry_run=dry_run,
+            overwrite=overwrite,
+        )
+    return results
+
+
 def download_glorys_data(
-    date_min, date_max, root_dir, tracker: DownloadTracker, dry_run=True
+    date_min,
+    date_max,
+    root_dir,
+    tracker: DownloadTracker,
+    dry_run=True,
+    benchmark_bbox: tuple[float, float, float, float] | None = None,
+    variables: list[str] | None = None,
+    overwrite: bool = False,
 ):
     """Download GLORYS SSH data with error tracking."""
     dataset_name = "glorys"
     tracker.logger.info(f"{'[DRY RUN] ' if dry_run else ''}Downloading GLORYS data...")
 
+    if benchmark_bbox is not None:
+        return _download_copernicus_daily_subset(
+            modality=dataset_name,
+            date_min=date_min,
+            date_max=date_max,
+            root_dir=root_dir,
+            tracker=tracker,
+            bbox=benchmark_bbox,
+            variables=variables,
+            dry_run=dry_run,
+            overwrite=overwrite,
+        )
+
+    client = _require_copernicusmarine()
     glorys_dir = os.path.join(root_dir, "glorys")
 
     try:
-        request_data = copernicusmarine.get(
+        request_data = client.get(
             dataset_id="cmems_mod_glo_phy_my_0.083deg_P1D-m",
             output_directory=glorys_dir,
             regex=create_copernicus_glorys_date_filter(date_min, date_max),
@@ -72,16 +341,37 @@ def download_glorys_data(
 
 
 def download_l4_ssh_data(
-    date_min, date_max, root_dir, tracker: DownloadTracker, dry_run=True
+    date_min,
+    date_max,
+    root_dir,
+    tracker: DownloadTracker,
+    dry_run=True,
+    benchmark_bbox: tuple[float, float, float, float] | None = None,
+    variables: list[str] | None = None,
+    overwrite: bool = False,
 ):
     """Download L4 SSH data from the MY all-sat collection."""
     dataset_name = "l4_ssh"
     tracker.logger.info(f"{'[DRY RUN] ' if dry_run else ''}Downloading L4 SSH data...")
 
+    if benchmark_bbox is not None:
+        return _download_copernicus_daily_subset(
+            modality=dataset_name,
+            date_min=date_min,
+            date_max=date_max,
+            root_dir=root_dir,
+            tracker=tracker,
+            bbox=benchmark_bbox,
+            variables=variables,
+            dry_run=dry_run,
+            overwrite=overwrite,
+        )
+
+    client = _require_copernicusmarine()
     out_dir = os.path.join(root_dir, "l4_ssh")
 
     try:
-        req = copernicusmarine.get(
+        req = client.get(
             dataset_id="cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D",
             output_directory=out_dir,
             regex=create_ssh_date_filter(date_min, date_max),
@@ -114,6 +404,7 @@ def download_l3_ssh_data(
     satellites=None,
 ):
     """Download L3 SSH data with per-satellite error tracking (MY/NRT split)."""
+    client = _require_copernicusmarine()
     dataset_name = "l3_ssh"
     tracker.logger.info(
         f"{'[DRY RUN] ' if dry_run else ''}Downloading L3 SSH data (MY and NRT products)..."
@@ -161,7 +452,7 @@ def download_l3_ssh_data(
         for r_type, start, end, dataset_id in req_configs:
             tracker.logger.info(f"    [{r_type}] ID: {dataset_id}")
             try:
-                req = copernicusmarine.get(
+                req = client.get(
                     dataset_id=dataset_id,
                     output_directory=l3_dir,
                     regex=create_ssh_date_filter(start, end),
@@ -226,6 +517,7 @@ def download_l3_sst_data(
     date_min, date_max, root_dir, tracker: DownloadTracker, dry_run=True
 ):
     """Download L3 SST data from the single MY ODYSSEA product."""
+    client = _require_copernicusmarine()
     dataset_name = "l3_sst"
     tracker.logger.info(
         f"{'[DRY RUN] ' if dry_run else ''}Downloading SST L3 infrared data..."
@@ -233,7 +525,7 @@ def download_l3_sst_data(
 
     out_dir = os.path.join(root_dir, "l3_sst")
     try:
-        req = copernicusmarine.get(
+        req = client.get(
             dataset_id="cmems_obs-sst_glo_phy_my_l3s_P1D-m",
             output_directory=out_dir,
             regex=create_l3_sst_date_filter(date_min, date_max),
@@ -263,6 +555,7 @@ def download_l3_sss_smos_data(
     date_min, date_max, root_dir, tracker: DownloadTracker, dry_run=True
 ):
     """Download SMOS SSS L3 data (ascending and descending orbits)."""
+    client = _require_copernicusmarine()
     dataset_name = "l3_sss_smos"
     tracker.logger.info(
         f"{'[DRY RUN] ' if dry_run else ''}Downloading SMOS SSS L3 data..."
@@ -274,7 +567,7 @@ def download_l3_sss_smos_data(
 
     try:
         tracker.logger.info("  Downloading SMOS ascending orbit data...")
-        req_asc = copernicusmarine.get(
+        req_asc = client.get(
             dataset_id="cmems_obs-mob_glo_phy-sss_mynrt_smos-asc_P1D",
             output_directory=out_dir,
             regex=create_sss_smos_date_filter(date_min, date_max),
@@ -298,7 +591,7 @@ def download_l3_sss_smos_data(
 
     try:
         tracker.logger.info("  Downloading SMOS descending orbit data...")
-        req_des = copernicusmarine.get(
+        req_des = client.get(
             dataset_id="cmems_obs-mob_glo_phy-sss_mynrt_smos-des_P1D",
             output_directory=out_dir,
             regex=create_sss_smos_date_filter(date_min, date_max),
@@ -349,12 +642,33 @@ def download_l3_sss_smos_data(
 
 
 def download_l4_sst_data(
-    date_min, date_max, root_dir, tracker: DownloadTracker, dry_run=True
+    date_min,
+    date_max,
+    root_dir,
+    tracker: DownloadTracker,
+    dry_run=True,
+    benchmark_bbox: tuple[float, float, float, float] | None = None,
+    variables: list[str] | None = None,
+    overwrite: bool = False,
 ):
     """Download L4 SST data with REP/NRT split as needed."""
     dataset_name = "l4_sst"
     tracker.logger.info(f"{'[DRY RUN] ' if dry_run else ''}Downloading SST L4 data...")
 
+    if benchmark_bbox is not None:
+        return _download_copernicus_daily_subset(
+            modality=dataset_name,
+            date_min=date_min,
+            date_max=date_max,
+            root_dir=root_dir,
+            tracker=tracker,
+            bbox=benchmark_bbox,
+            variables=variables,
+            dry_run=dry_run,
+            overwrite=overwrite,
+        )
+
+    client = _require_copernicusmarine()
     out_dir = os.path.join(root_dir, "l4_sst")
 
     nrt_start = datetime(2024, 1, 16)
@@ -368,7 +682,7 @@ def download_l4_sst_data(
     else:
         results = {}
         rep_end = (nrt_start - timedelta(days=1)).strftime("%Y-%m-%d")
-        req_rep = copernicusmarine.get(
+        req_rep = client.get(
             dataset_id="METOFFICE-GLO-SST-L4-REP-OBS-SST",
             output_directory=out_dir,
             regex=create_l4_sst_date_filter(date_min, rep_end),
@@ -377,7 +691,7 @@ def download_l4_sst_data(
         )
         results["REP"] = req_rep
 
-        req_nrt = copernicusmarine.get(
+        req_nrt = client.get(
             dataset_id="METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2",
             output_directory=out_dir,
             regex=create_l4_sst_date_filter(nrt_start.strftime("%Y-%m-%d"), date_max),
@@ -398,7 +712,7 @@ def download_l4_sst_data(
                     tracker.logger.info(f"    {key}: {len(req.files)} files")
         return results
 
-    req = copernicusmarine.get(
+    req = client.get(
         dataset_id=dataset_id,
         output_directory=out_dir,
         regex=create_l4_sst_date_filter(date_min, date_max),
@@ -418,12 +732,33 @@ def download_l4_sst_data(
 
 
 def download_l4_sss_data(
-    date_min, date_max, root_dir, tracker: DownloadTracker, dry_run=True
+    date_min,
+    date_max,
+    root_dir,
+    tracker: DownloadTracker,
+    dry_run=True,
+    benchmark_bbox: tuple[float, float, float, float] | None = None,
+    variables: list[str] | None = None,
+    overwrite: bool = False,
 ):
     """Download L4 SSS data with MY/NRT split by cutoff date."""
     dataset_name = "l4_sss"
     tracker.logger.info(f"{'[DRY RUN] ' if dry_run else ''}Downloading SSS L4 data...")
 
+    if benchmark_bbox is not None:
+        return _download_copernicus_daily_subset(
+            modality=dataset_name,
+            date_min=date_min,
+            date_max=date_max,
+            root_dir=root_dir,
+            tracker=tracker,
+            bbox=benchmark_bbox,
+            variables=variables,
+            dry_run=dry_run,
+            overwrite=overwrite,
+        )
+
+    client = _require_copernicusmarine()
     out_dir = os.path.join(root_dir, "l4_sss")
 
     try:
@@ -434,7 +769,7 @@ def download_l4_sss_data(
         files_count = 0
 
         if dt_max <= cutoff_date:
-            req_my = copernicusmarine.get(
+            req_my = client.get(
                 dataset_id="cmems_obs-mob_glo_phy-sss_my_multi_P1D",
                 output_directory=out_dir,
                 regex=create_sss_date_filter(date_min, date_max),
@@ -444,7 +779,7 @@ def download_l4_sss_data(
             results["MY"] = req_my
             files_count += len(req_my.files) if hasattr(req_my, "files") else 0
         elif dt_min > cutoff_date:
-            req_nrt = copernicusmarine.get(
+            req_nrt = client.get(
                 dataset_id="cmems_obs-mob_glo_phy-sss_nrt_multi_P1D",
                 output_directory=out_dir,
                 regex=create_sss_date_filter(date_min, date_max),
@@ -455,7 +790,7 @@ def download_l4_sss_data(
             files_count += len(req_nrt.files) if hasattr(req_nrt, "files") else 0
         else:
             my_end = cutoff_date.strftime("%Y-%m-%d")
-            req_my = copernicusmarine.get(
+            req_my = client.get(
                 dataset_id="cmems_obs-mob_glo_phy-sss_my_multi_P1D",
                 output_directory=out_dir,
                 regex=create_sss_date_filter(date_min, my_end),
@@ -466,7 +801,7 @@ def download_l4_sss_data(
             files_count += len(req_my.files) if hasattr(req_my, "files") else 0
 
             nrt_start = (cutoff_date + timedelta(days=1)).strftime("%Y-%m-%d")
-            req_nrt = copernicusmarine.get(
+            req_nrt = client.get(
                 dataset_id="cmems_obs-mob_glo_phy-sss_nrt_multi_P1D",
                 output_directory=out_dir,
                 regex=create_sss_date_filter(nrt_start, date_max),
@@ -492,6 +827,7 @@ def download_l4_wind_data(
     date_min, date_max, root_dir, tracker: DownloadTracker, dry_run=True
 ):
     """Download L4 wind data across legacy and current products."""
+    client = _require_copernicusmarine()
     dataset_name = "l4_wind"
     tracker.logger.info(f"{'[DRY RUN] ' if dry_run else ''}Downloading Wind L4 data...")
 
@@ -523,7 +859,7 @@ def download_l4_wind_data(
             tracker.logger.info(f"  Processing {product_name} product")
 
             try:
-                req = copernicusmarine.get(
+                req = client.get(
                     dataset_id=product_info["dataset_id"],
                     output_directory=out_dir,
                     regex=create_wind_date_filter(
@@ -575,13 +911,14 @@ def download_argo_data(
     date_min, date_max, root_dir, tracker: DownloadTracker, dry_run=True, region=None
 ):
     """Download Argo data with error tracking and regional chunking."""
+    argopy_module, argo_fetcher_cls = _require_argopy()
     dataset_name = "argo"
     tracker.logger.info(f"{'[DRY RUN] ' if dry_run else ''}Downloading Argo data...")
 
     argo_dir = os.path.join(root_dir, "argo")
     Path(argo_dir).mkdir(parents=True, exist_ok=True)
 
-    argopy.set_options(src="erddap", mode="research")
+    argopy_module.set_options(src="erddap", mode="research")
 
     try:
         if dry_run:
@@ -644,7 +981,7 @@ def download_argo_data(
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    fetcher = ArgoDataFetcher(src="erddap").region(
+                    fetcher = argo_fetcher_cls(src="erddap").region(
                         [
                             lon_min,
                             lon_max,

@@ -4,6 +4,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -125,7 +126,12 @@ def make_record(
     return record
 
 
-def process_glorys_data(ds, date_str, output_dir):
+def process_glorys_data(
+    ds,
+    date_str,
+    output_dir,
+    benchmark_exporter: Any = None,
+):
     """Process GLORYS: extract variables at specific depths, split by region."""
     if ds is None:
         return 0, []
@@ -191,6 +197,14 @@ def process_glorys_data(ds, date_str, output_dir):
         check_encoding_safety(ds_out, encoding)
 
         outfile = out_dir / f"glorys_{region_name}_{date_str}.nc"
+        if benchmark_exporter is not None:
+            benchmark_exporter.export_tile(
+                dataset=ds_out,
+                modality="glorys",
+                region_name=region_name,
+                date_str=date_str,
+                formatted_file=outfile,
+            )
         ds_out.to_netcdf(outfile, encoding=encoding, engine="h5netcdf")
 
         records.append(
@@ -213,7 +227,15 @@ def process_glorys_data(ds, date_str, output_dir):
     return len(records), records
 
 
-def process_and_split(ds, date_str, output_dir, modality, keep_vars=None, sensor=None):
+def process_and_split(
+    ds,
+    date_str,
+    output_dir,
+    modality,
+    keep_vars=None,
+    sensor=None,
+    benchmark_exporter: Any = None,
+):
     """Generic processing for gridded data."""
     if ds is None:
         return 0, []
@@ -276,6 +298,14 @@ def process_and_split(ds, date_str, output_dir, modality, keep_vars=None, sensor
         encoding = {v: get_variable_encoding(v) for v in regional_ds.data_vars}
         check_encoding_safety(regional_ds, encoding)
 
+        if benchmark_exporter is not None:
+            benchmark_exporter.export_tile(
+                dataset=regional_ds,
+                modality=modality,
+                region_name=region_name,
+                date_str=date_str,
+                formatted_file=outfile,
+            )
         regional_ds.to_netcdf(outfile, encoding=encoding, engine="h5netcdf")
 
         records.append(
@@ -1034,7 +1064,7 @@ def apply_track_mask_to_netcdf(
     is_overlap = ds["is_overlap"].values
 
     # Identify data variables to mask (exclude metadata variables)
-    skip_vars = {"primary_track", "is_overlap", "n_obs", "track_ids", "track_times"}
+    skip_vars = {"primary_track", "is_overlap", "n_obs", "n_tracks", "track_ids", "track_times"}
     data_vars = [v for v in ds.data_vars if v not in skip_vars]
 
     # Apply masking to each data variable
@@ -1084,5 +1114,3 @@ def split_tracks_for_validation(
     train_indices = all_indices[n_val:].tolist()
 
     return train_indices, val_indices
-
-

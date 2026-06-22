@@ -63,6 +63,10 @@ docs = [
     "sphinx-copybutton>=0.5",
     "sphinx-autodoc-typehints>=2.0",
 ]
+benchmarks = [
+    "h5py>=3.11",
+    "zarr>=2.18",
+]
 
 [project.urls]
 Repository = "https://github.com/nilsleh/oceanTACO"
@@ -104,6 +108,7 @@ extend-select = ["D", "I", "UP"]
 [tool.ruff.lint.per-file-ignores]
 "docs/**" = ["D"]
 "tests/**" = ["D"]
+"**/test_*.py" = ["D"]
 
 [tool.ruff.lint.isort]
 split-on-trailing-comma = false

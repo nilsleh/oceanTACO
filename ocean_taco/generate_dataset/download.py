@@ -20,7 +20,9 @@ from ocean_taco.generate_dataset.download_date_filters import (
     regex_date_filter,
 )
 from ocean_taco.generate_dataset.download_sources import (
+    BENCHMARK_SUBSET_MODALITIES,
     download_argo_data,
+    download_benchmark_subset_data,
     download_glorys_data,
     download_l3_ssh_data,
     download_l3_sss_smos_data,
@@ -39,6 +41,37 @@ from ocean_taco.generate_dataset.download_swot import (
     parallel_swot_download,
 )
 from ocean_taco.generate_dataset.download_tracker import DownloadTracker
+
+
+ALL_DOWNLOAD_SOURCES = [
+    "glorys",
+    "l4_ssh",
+    "l3_ssh",
+    "l3_sst",
+    "l3_sss_smos",
+    "l4_sst",
+    "l4_sss",
+    "l4_wind",
+    "argo",
+]
+
+
+def _parse_variable_overrides(items: list[str] | None) -> dict[str, list[str]]:
+    """Parse ``source=var1,var2`` entries into a mapping."""
+    overrides: dict[str, list[str]] = {}
+    for item in items or []:
+        if "=" not in item:
+            raise ValueError(
+                f"Invalid variable override '{item}'. Use source=var1,var2."
+            )
+        source, value = item.split("=", 1)
+        values = [token.strip() for token in value.split(",") if token.strip()]
+        if not source or not values:
+            raise ValueError(
+                f"Invalid variable override '{item}'. Use source=var1,var2."
+            )
+        overrides[source] = values
+    return overrides
 
 
 def main():
@@ -67,6 +100,35 @@ def main():
         action="store_true",
         help="Continue downloading other datasets if one fails",
     )
+    parser.add_argument(
+        "--sources",
+        nargs="+",
+        choices=ALL_DOWNLOAD_SOURCES,
+        help="Restrict downloads to a subset of source families.",
+    )
+    parser.add_argument(
+        "--benchmark-subset",
+        action="store_true",
+        help="Use copernicusmarine.subset(...) to download a tiny benchmark subset for regular-grid products.",
+    )
+    parser.add_argument(
+        "--bbox",
+        nargs=4,
+        type=float,
+        metavar=("LON_MIN", "LON_MAX", "LAT_MIN", "LAT_MAX"),
+        help="Bounding box for benchmark-subset downloads.",
+    )
+    parser.add_argument(
+        "--variables",
+        nargs="+",
+        metavar="SOURCE=VAR1,VAR2",
+        help="Subset variable overrides, for example l4_ssh=sla glorys=zos.",
+    )
+    parser.add_argument(
+        "--overwrite-existing-subsets",
+        action="store_true",
+        help="Overwrite existing benchmark-subset raw files instead of reusing them.",
+    )
     args = parser.parse_args()
 
     dry_run = args.dry_run or not args.download
@@ -89,6 +151,19 @@ def main():
         if args.weekly_batches
         else [(args.start_date, args.end_date)]
     )
+
+    selected_sources = args.sources or ALL_DOWNLOAD_SOURCES
+    variable_overrides = _parse_variable_overrides(args.variables)
+
+    if args.benchmark_subset:
+        if args.bbox is None:
+            raise ValueError("--bbox is required when --benchmark-subset is used.")
+        unsupported = sorted(set(selected_sources) - set(BENCHMARK_SUBSET_MODALITIES))
+        if unsupported:
+            raise ValueError(
+                "--benchmark-subset only supports regular-grid modalities: "
+                f"{', '.join(BENCHMARK_SUBSET_MODALITIES)}. Unsupported: {unsupported}"
+            )
 
     if args.weekly_batches:
         tracker.logger.info(f"Weekly batch mode: {len(spans)} segments")
@@ -132,8 +207,53 @@ def main():
         ),
     ]
 
+    if args.benchmark_subset:
+        download_functions = [
+            (
+                "Benchmark subset",
+                lambda s, e: download_benchmark_subset_data(
+                    s,
+                    e,
+                    str(output_dir),
+                    tracker,
+                    sources=selected_sources,
+                    bbox=tuple(args.bbox),
+                    variables_by_source=variable_overrides,
+                    dry_run=dry_run,
+                    overwrite=args.overwrite_existing_subsets,
+                ),
+            )
+        ]
+    else:
+        filtered_functions = []
+        for dataset_name, download_func in download_functions:
+            source_token = dataset_name.lower().replace(" ", "_")
+            if dataset_name == "GLORYS":
+                source_key = "glorys"
+            elif dataset_name == "L4 SSH":
+                source_key = "l4_ssh"
+            elif dataset_name == "L3 SSH":
+                source_key = "l3_ssh"
+            elif dataset_name == "L3 SST":
+                source_key = "l3_sst"
+            elif dataset_name == "L3 SMOS SSS":
+                source_key = "l3_sss_smos"
+            elif dataset_name == "L4 SST":
+                source_key = "l4_sst"
+            elif dataset_name == "L4 SSS":
+                source_key = "l4_sss"
+            elif dataset_name == "L4 Wind":
+                source_key = "l4_wind"
+            elif dataset_name == "Argo":
+                source_key = "argo"
+            else:
+                source_key = source_token
+            if source_key in selected_sources:
+                filtered_functions.append((dataset_name, download_func))
+        download_functions = filtered_functions
+
     # SWOT requires explicit AVISO FTP credentials.
-    if args.aviso_ftp_user and args.aviso_ftp_pass:
+    if not args.benchmark_subset and args.aviso_ftp_user and args.aviso_ftp_pass:
         swot_label = f"SWOT {args.swot_level.upper()}"
         download_functions.append(
             (
