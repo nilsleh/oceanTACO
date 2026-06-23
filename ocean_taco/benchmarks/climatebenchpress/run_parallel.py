@@ -24,6 +24,7 @@ import argparse
 import csv
 import shutil
 import subprocess
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -64,6 +65,45 @@ RETAINED_CODECS = [c for c in ALL_CODECS if c not in DEFAULT_EXCLUDED_CODECS]
 DEFAULT_CONDA_ENV = "testpy312"
 # Conservative default; size up from the per-job peak RSS in the run summary.
 DEFAULT_MAX_WORKERS = 4
+
+
+def _python_launcher(conda_env: str, python_exe: str | None = None) -> list[str]:
+    """Prefix that runs ``python`` for one inner job.
+
+    When ``conda_env`` names a conda env, jobs run under ``conda run -n <env>`` (the
+    original behaviour). When it is empty or ``"none"`` (case-insensitive), there is no
+    conda on the machine, so jobs run directly with ``python_exe`` -- the interpreter of
+    the benchmark venv (``cbp_venv_template``). It defaults to ``sys.executable`` (the
+    interpreter running this driver), but should be set explicitly via ``--python`` so the
+    jobs do not silently inherit a *different* active venv than intended.
+    """
+    if conda_env and conda_env.lower() != "none":
+        return ["conda", "run", "-n", conda_env, "--no-capture-output", "python"]
+    return [python_exe or sys.executable]
+
+
+def _preflight_python(conda_env: str, python_exe: str | None = None) -> None:
+    """Verify the chosen launcher can import ClimateBenchPress before spawning jobs.
+
+    Without this, a wrong active venv (no ``climatebenchpress`` installed) makes every
+    isolated job fail identically with ``ModuleNotFoundError`` after the whole grid has
+    been launched. Here we run the launcher once and raise a clear, actionable error.
+    """
+    check = [
+        *_python_launcher(conda_env, python_exe),
+        "-c",
+        "import climatebenchpress.compressor.compressors, "
+        "climatebenchpress.data_loader.cf, ocean_taco",
+    ]
+    proc = subprocess.run(check, capture_output=True, text=True)
+    if proc.returncode != 0:
+        launcher = " ".join(_python_launcher(conda_env, python_exe))
+        raise RuntimeError(
+            "Preflight failed: the benchmark interpreter cannot import ClimateBenchPress "
+            f"+ ocean_taco.\n  launcher: {launcher}\n"
+            "Activate the cbp venv (source .../cbp_venv_template/activate.sh) or pass "
+            "--python <cbp venv python>.\n--- stderr ---\n" + proc.stderr.strip()
+        )
 
 
 @dataclass(frozen=True)
@@ -157,12 +197,13 @@ def build_job_command(
     metric_names: list[str],
     *,
     conda_env: str,
+    python_exe: str | None = None,
     rss_path: Path | None,
     overwrite: bool,
 ) -> list[str]:
-    """Build the ``conda run ... /usr/bin/time ... run_cbp_benchmark`` argv for one job."""
+    """Build the ``<launcher> ... /usr/bin/time ... run_cbp_benchmark`` argv for one job."""
     inner = [
-        "python",
+        *_python_launcher(conda_env, python_exe),
         "-u",
         "-m",
         "ocean_taco.benchmarks.climatebenchpress.run_cbp_benchmark",
@@ -183,8 +224,7 @@ def build_job_command(
     time_bin = shutil.which("time") or "/usr/bin/time"
     if rss_path is not None and Path(time_bin).exists():
         inner = [time_bin, "-f", "%M", "-o", str(rss_path), *inner]
-    cmd = ["conda", "run", "-n", conda_env, "--no-capture-output", *inner]
-    return cmd
+    return inner
 
 
 def run_job(
@@ -194,6 +234,7 @@ def run_job(
     metric_names: list[str],
     *,
     conda_env: str,
+    python_exe: str | None = None,
     logs_dir: Path,
     overwrite: bool,
 ) -> JobResult:
@@ -208,6 +249,7 @@ def run_job(
         climatebenchpress_root,
         metric_names,
         conda_env=conda_env,
+        python_exe=python_exe,
         rss_path=rss_path,
         overwrite=overwrite,
     )
@@ -275,6 +317,7 @@ def run_parallel(
     *,
     max_workers: int = DEFAULT_MAX_WORKERS,
     conda_env: str = DEFAULT_CONDA_ENV,
+    python_exe: str | None = None,
     overwrite: bool = False,
     run_analysis: bool = True,
     job_runner=run_job,
@@ -316,6 +359,11 @@ def run_parallel(
     names = dataset_names or discover_datasets(benchmark_root)
     logs_dir = benchmark_root / "logs"
 
+    # Fail fast (before spawning the whole grid) if the chosen interpreter cannot import
+    # ClimateBenchPress -- the common foot-gun is launching with the wrong venv active so
+    # every isolated job dies identically with ModuleNotFoundError.
+    _preflight_python(conda_env, python_exe)
+
     pending, skipped = enumerate_jobs(
         benchmark_root, names, codecs, overwrite=overwrite
     )
@@ -340,6 +388,7 @@ def run_parallel(
                 climatebenchpress_root,
                 metric_names,
                 conda_env=conda_env,
+                python_exe=python_exe,
                 logs_dir=logs_dir,
                 overwrite=overwrite,
             ): job
@@ -369,8 +418,7 @@ def run_parallel(
     # outputs; concatenate_metrics rebuilds all_results.csv).
     print("\nFinal concat + provenance pass...")
     concat_cmd = [
-        "conda", "run", "-n", conda_env, "--no-capture-output",
-        "python", "-u", "-m",
+        *_python_launcher(conda_env, python_exe), "-u", "-m",
         "ocean_taco.benchmarks.climatebenchpress.run_cbp_benchmark",
         "--benchmark-root", str(benchmark_root),
         "--climatebenchpress-root", str(climatebenchpress_root),
@@ -383,8 +431,7 @@ def run_parallel(
     if run_analysis:
         print("Building analysis artifacts...")
         analyze_cmd = [
-            "conda", "run", "-n", conda_env, "--no-capture-output",
-            "python", "-u", "-m",
+            *_python_launcher(conda_env, python_exe), "-u", "-m",
             "ocean_taco.benchmarks.climatebenchpress.analyze_results",
             "--benchmark-root", str(benchmark_root),
         ]
@@ -413,7 +460,25 @@ def main() -> None:
         "-j", "--max-workers", type=int, default=DEFAULT_MAX_WORKERS,
         help="Concurrent isolated subprocesses.",
     )
-    parser.add_argument("--conda-env", default=DEFAULT_CONDA_ENV)
+    parser.add_argument(
+        "--conda-env",
+        default=DEFAULT_CONDA_ENV,
+        help=(
+            f"Conda env to run each job under (default: {DEFAULT_CONDA_ENV}). Pass "
+            "'none' on machines without conda to run jobs with the active venv's python "
+            "(activate the benchmark venv first)."
+        ),
+    )
+    parser.add_argument(
+        "--python",
+        default=None,
+        help=(
+            "Interpreter to run each job with when --conda-env is 'none'. Defaults to the "
+            "interpreter running this driver (sys.executable). Set this to the cbp venv "
+            "python to avoid silently inheriting a different active venv, e.g. "
+            "/p/project1/hai_uqmethodbox/nils/cbp_venv_template/venv/bin/python."
+        ),
+    )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
         "--no-analysis", action="store_true", help="Skip the analyze_results pass."
@@ -428,6 +493,7 @@ def main() -> None:
         metric_names=args.metrics,
         max_workers=args.max_workers,
         conda_env=args.conda_env,
+        python_exe=args.python,
         overwrite=args.overwrite,
         run_analysis=not args.no_analysis,
     )

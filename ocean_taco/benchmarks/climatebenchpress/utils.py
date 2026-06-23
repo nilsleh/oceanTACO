@@ -23,6 +23,25 @@ def ensure_zarr_available() -> None:
         )
 
 
+def netcdf_engine() -> str:
+    """Return an available xarray NetCDF backend for the active environment.
+
+    Both reading exported ``.nc`` tiles and writing the container-size NetCDF use an
+    HDF5-backed NetCDF engine. The OceanTACO generation env has ``h5py`` (``h5netcdf``),
+    but the CBP benchmark venv ships ``netcdf4`` and lacks ``h5py``. Both back the same
+    files, so we pick whichever is importable rather than hardcoding ``h5netcdf`` and
+    failing in the benchmark venv.
+    """
+    if importlib.util.find_spec("h5py") is not None:
+        return "h5netcdf"
+    if importlib.util.find_spec("netCDF4") is not None:
+        return "netcdf4"
+    raise ImportError(
+        "No NetCDF backend available: install 'h5py' (h5netcdf) or 'netCDF4' into this "
+        "environment."
+    )
+
+
 def coord_hash(values: np.ndarray) -> str:
     """Return a stable hash for one coordinate array."""
     arr = np.asarray(values, dtype=np.float64)

@@ -32,6 +32,7 @@ from ocean_taco.benchmarks.climatebenchpress.config import (
     BENCHMARK_MODALITY_CONFIGS,
     DATASET_NAME_TO_MODALITY,
 )
+from ocean_taco.benchmarks.climatebenchpress.utils import netcdf_engine
 
 # Anchor (1x) corresponds to the smallest abs_error tier, which CBP labels "low".
 ANCHOR_BOUND_NAME = "low"
@@ -192,7 +193,7 @@ def compute_netcdf_container_sizes(benchmark_root: str | Path) -> pd.DataFrame:
             tmp_path = Path(handle.name)
         try:
             data.to_dataset(name=var).to_netcdf(
-                tmp_path, engine="h5netcdf", encoding=encoding
+                tmp_path, engine=netcdf_engine(), encoding=encoding
             )
             netcdf_bytes = tmp_path.stat().st_size
         finally:

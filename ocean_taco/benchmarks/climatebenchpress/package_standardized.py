@@ -24,6 +24,7 @@ from ocean_taco.benchmarks.climatebenchpress.export_subset import (
 from ocean_taco.benchmarks.climatebenchpress.utils import (
     dataframe_from_records,
     ensure_zarr_available,
+    netcdf_engine,
     reduce_to_lat_lon_2d,
 )
 
@@ -72,7 +73,7 @@ def _load_region_grids(df: pd.DataFrame, primary_var: str) -> tuple[dict[str, Re
 
     for region, group in df.groupby("region", sort=True):
         sample_path = Path(group.iloc[0]["tile_path"])
-        with xr.open_dataset(sample_path, engine="h5netcdf") as ds_sample:
+        with xr.open_dataset(sample_path, engine=netcdf_engine()) as ds_sample:
             if primary_var not in ds_sample:
                 raise ValueError(
                     f"Primary variable '{primary_var}' not found in exported tile {sample_path}."
@@ -115,7 +116,7 @@ def _build_standardized_dataset(
         lon_coord[idx, : region_grid.x_size] = region_grid.lon_values
 
     for row in df.itertuples(index=False):
-        with xr.open_dataset(Path(row.tile_path), engine="h5netcdf") as ds_tile:
+        with xr.open_dataset(Path(row.tile_path), engine=netcdf_engine()) as ds_tile:
             if primary_var not in ds_tile:
                 raise ValueError(
                     f"Primary variable '{primary_var}' not found in exported tile {row.tile_path}."
@@ -202,7 +203,16 @@ def package_dataset(
     # T/E coordinates share consistent chunks (CBP's CodecStack rejects datasets
     # with inconsistent chunks along a shared dimension).
     encoding = {var: {"chunks": dataset[var].shape} for var in dataset.data_vars}
-    dataset.to_zarr(store_path, mode="w", encoding=encoding)
+    # Force zarr v2 on-disk format. Packaging runs in the OceanTACO generation env (which
+    # may have zarr 3.x, defaulting to v3 stores), but the ClimateBenchPress benchmark env
+    # pins zarr~=2.18 and can only read v2. The ``zarr_format`` kwarg exists only on newer
+    # xarray/zarr-3; on zarr-2 v2 is already the only format, so we pass it conditionally.
+    to_zarr_kwargs = {"mode": "w", "encoding": encoding}
+    import inspect
+
+    if "zarr_format" in inspect.signature(dataset.to_zarr).parameters:
+        to_zarr_kwargs["zarr_format"] = 2
+    dataset.to_zarr(store_path, **to_zarr_kwargs)
     subset.to_csv(packaged_manifest_path, index=False)
     write_error_bounds_file(error_path, config.primary_var, config.strict_abs_error)
     write_manifest(root)
