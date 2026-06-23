@@ -19,6 +19,7 @@ import xarray as xr
 
 from ocean_taco.generate_dataset import format_constants as pipeline_constants
 from ocean_taco.generate_dataset import format_coords as pipeline_coords
+from ocean_taco.generate_dataset import format_encoding as pipeline_encoding
 from ocean_taco.generate_dataset import format_gridding as pipeline_gridding
 from ocean_taco.generate_dataset import format_loaders as pipeline_loaders
 
@@ -487,14 +488,14 @@ def build_pre_encoding_reference_dataset(modality, ds_orig, region):
     if ds_orig is None:
         return None
 
-    bounds = pipeline.SPATIAL_REGIONS[region]
+    bounds = pipeline_constants.SPATIAL_REGIONS[region]
 
     # GLORYS has modality-specific variable/depth extraction logic.
     if modality == "glorys":
         ds = ds_orig
         if "time" in ds.dims:
             ds = ds.isel(time=slice(0, 1))
-        ds = pipeline.normalize_coords(ds)
+        ds = pipeline_coords.normalize_coords(ds)
 
         variables = {
             "zos": ("zos", None),
@@ -504,7 +505,7 @@ def build_pre_encoding_reference_dataset(modality, ds_orig, region):
             "vo": ("vo", 10),
         }
 
-        regional = pipeline.split_gridded_into_regions(ds, {region: bounds}).get(region)
+        regional = pipeline_coords.split_gridded_into_regions(ds, {region: bounds}).get(region)
         if regional is None or not regional.get("intersects", False):
             return None
 
@@ -532,7 +533,7 @@ def build_pre_encoding_reference_dataset(modality, ds_orig, region):
     ds = ds_orig
     if "time" in ds.dims:
         ds = ds.isel(time=slice(0, 1))
-    ds = pipeline.normalize_coords(ds)
+    ds = pipeline_coords.normalize_coords(ds)
 
     keep_vars = list(get_var_mapping_for_modality(modality).keys())
     if keep_vars:
@@ -542,11 +543,11 @@ def build_pre_encoding_reference_dataset(modality, ds_orig, region):
 
     ds = _convert_kelvin_like_temperature_vars(ds)
 
-    regional = pipeline.split_gridded_into_regions(ds, {region: bounds}).get(region)
+    regional = pipeline_coords.split_gridded_into_regions(ds, {region: bounds}).get(region)
     if regional is None or not regional.get("intersects", False):
         return None
 
-    return pipeline.clear_encoding(regional["dataset"])
+    return pipeline_encoding.clear_encoding(regional["dataset"])
 
 
 def choose_representative_variable(modality, variables):
@@ -978,6 +979,15 @@ def process_date_modality_task(task):
                     output_dir,
                     date_str=date_str,
                 )
+                plot_relative_error_map(
+                    ds_orig[orig_var],
+                    ds_fmt[fmt_var],
+                    fmt_var,
+                    region,
+                    modality,
+                    output_dir,
+                    date_str=date_str,
+                )
 
     return rows
 
@@ -1028,15 +1038,23 @@ def compute_loss_stats(data_orig, data_fmt, var_name):
         else 0.0
     )
 
+    rmse = float(np.sqrt(np.mean(error**2)))
+    # Global spatial std of the original field over valid cells. Used to express the
+    # compression error as a noise-to-signal ratio (RMSE / sigma), so readers can judge
+    # usability relative to the field's natural variability.
+    field_std = float(np.std(v_orig))
+
     stats = {
         "n_valid": int(v_orig.size),
         "MAE": float(np.mean(abs_error)),
-        "RMSE": float(np.sqrt(np.mean(error**2))),
+        "RMSE": rmse,
         "Max_Abs_Error": float(np.max(abs_error)),
         "P99_Error": float(np.percentile(abs_error, 99)),
         "P99_Error_NonZero": p99_nonzero,
         "Error_NonZero_Fraction": nonzero_fraction,
         "Bias": float(np.mean(error)),
+        "Field_Std": field_std,
+        "Noise_To_Signal": (rmse / field_std) if field_std > 0 else float("nan"),
         "Orig_Min": float(np.min(v_orig)),
         "Orig_Max": float(np.max(v_orig)),
         "Fmt_Min": float(np.min(v_fmt)),
@@ -1183,6 +1201,128 @@ def plot_loss_diagnostics(
     logging.info(f"Saved plot to {out_file}")
 
 
+def _local_windowed_std(field_2d, window):
+    """NaN-safe moving-window standard deviation of a 2-D field.
+
+    Computes the local std over a ``window``x``window`` neighbourhood using
+    ``E[x^2] - E[x]^2`` evaluated with ``scipy.ndimage.uniform_filter`` on the valid-cell
+    mask, so land/missing cells (NaN) neither contribute to nor poison a window. Cells with
+    no valid neighbours return NaN.
+    """
+    from scipy import ndimage
+
+    mask = np.isfinite(field_2d).astype(np.float64)
+    filled = np.where(mask > 0, field_2d, 0.0).astype(np.float64)
+
+    counts = ndimage.uniform_filter(mask, size=window, mode="nearest") * window * window
+    sum_x = ndimage.uniform_filter(filled, size=window, mode="nearest") * window * window
+    sum_x2 = (
+        ndimage.uniform_filter(filled * filled, size=window, mode="nearest")
+        * window
+        * window
+    )
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mean = sum_x / counts
+        var = sum_x2 / counts - mean * mean
+        # Clamp tiny negative variances from floating-point cancellation to zero.
+        var = np.where(var < 0, 0.0, var)
+        std = np.sqrt(var)
+
+    std = np.where(counts > 0, std, np.nan)
+    return std
+
+
+def plot_relative_error_map(
+    data_orig,
+    data_fmt,
+    var_name,
+    region,
+    modality,
+    output_dir,
+    date_str,
+    window=9,
+):
+    """Plot the compression error normalised by the local spatial std of the field.
+
+    Replot of the absolute-error scatter (paper Fig. 4) as a relative-error map: each cell
+    shows ``|orig - comp| / sigma_local`` where ``sigma_local`` is a windowed std of the
+    original field. This exposes the high relative error in low-variability regions (where a
+    few cm of natural variability makes a sub-mm error reach ~1%), which the absolute scatter
+    hides. The floor is set by the ``int16`` representation of the deployed encoding.
+    """
+    if "time" in data_orig.dims:
+        if data_orig.sizes["time"] == 1:
+            data_orig = data_orig.squeeze("time")
+        else:
+            data_orig = data_orig.isel(time=0)
+
+    if "time" in data_orig.coords:
+        data_orig = data_orig.drop_vars("time")
+
+    data_orig = reduce_to_lat_lon_2d(data_orig, name=f"original:{var_name}")
+    data_fmt = reduce_to_lat_lon_2d(data_fmt, name=f"formatted:{var_name}")
+
+    data_orig_interp = data_orig.interp(
+        lat=data_fmt.lat.values, lon=data_fmt.lon.values, method="nearest"
+    )
+
+    map_orig = (
+        data_orig_interp.isel(time=0)
+        if "time" in data_orig_interp.dims
+        else data_orig_interp
+    )
+    map_fmt = data_fmt.isel(time=0) if "time" in data_fmt.dims else data_fmt
+
+    if map_orig.mean() > 200 and map_fmt.mean() < 100:
+        map_orig = map_orig - 273.15
+
+    map_diff = map_orig - map_fmt
+
+    orig_vals = np.asarray(map_orig.values, dtype=np.float64)
+    diff_vals = np.abs(np.asarray(map_diff.values, dtype=np.float64))
+
+    local_std = _local_windowed_std(orig_vals, window)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        rel_err = diff_vals / local_std
+    rel_err = np.where((local_std > 0) & np.isfinite(local_std), rel_err, np.nan)
+
+    rel_da = xr.DataArray(
+        rel_err, coords=map_diff.coords, dims=map_diff.dims, name="relative_error"
+    )
+
+    finite = rel_err[np.isfinite(rel_err)]
+    vmax = float(np.percentile(finite, 99)) if finite.size else None
+
+    fig, ax = plt.subplots(figsize=(9, 7))
+    p = rel_da.plot(
+        ax=ax,
+        cmap="magma",
+        vmin=0.0,
+        vmax=vmax,
+        cbar_kwargs={"label": r"Relative error  $|\Delta|\,/\,\sigma_{\mathrm{local}}$"},
+    )
+    p.colorbar.set_label(
+        r"Relative error  $|\Delta|\,/\,\sigma_{\mathrm{local}}$", fontsize=13
+    )
+    ax.set_title(
+        f"Relative compression error: {var_name}\n"
+        rf"$\sigma_{{\mathrm{{local}}}}$ = std over {window}$\times${window} window",
+        fontsize=15,
+    )
+    ax.tick_params(axis="x", labelsize=12)
+    ax.tick_params(axis="y", labelsize=12)
+    fig.tight_layout()
+
+    out_file = (
+        Path(output_dir)
+        / f"relative_error_{modality}_{region}_{date_str}_{var_name}.png"
+    )
+    fig.savefig(out_file, dpi=150)
+    plt.close(fig)
+    logging.info(f"Saved relative-error map to {out_file}")
+
+
 def compute_and_plot_loss(data_orig, data_fmt, var_name, region, modality, output_dir):
     """Compute error stats and generate plot."""
     stats = compute_loss_stats(data_orig, data_fmt, var_name)
@@ -1208,6 +1348,15 @@ def compute_and_plot_loss(data_orig, data_fmt, var_name, region, modality, outpu
         output_dir,
         date_str="single",
     )
+    plot_relative_error_map(
+        data_orig,
+        data_fmt,
+        var_name,
+        region,
+        modality,
+        output_dir,
+        date_str="single",
+    )
     return stats
 
 
@@ -1220,16 +1369,21 @@ def save_latex_table(results_file: str | Path, output_path: str | Path) -> None:
     import statistics as _stats
 
     groups: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
-        lambda: {"RMSE": [], "Bias": [], "P99_Error": []}
+        lambda: {"RMSE": [], "Bias": [], "P99_Error": [], "Noise_To_Signal": []}
     )
     with open(results_file, newline="") as f:
         for row in csv.DictReader(f):
             key = (row["modality"], row["variable"])
-            for col in ("RMSE", "Bias"):
+            # Noise_To_Signal is optional: older CSVs predate the column, so a missing key
+            # or unparseable value (e.g. "nan") is skipped and renders as "---".
+            for col in ("RMSE", "Bias", "Noise_To_Signal"):
                 try:
-                    groups[key][col].append(float(row[col]))
+                    val = float(row[col])
                 except (ValueError, KeyError):
-                    pass
+                    continue
+                if np.isnan(val):
+                    continue
+                groups[key][col].append(val)
             p99_col = "P99_Error_Report" if "P99_Error_Report" in row else "P99_Error"
             try:
                 groups[key]["P99_Error"].append(float(row[p99_col]))
@@ -1249,11 +1403,12 @@ def save_latex_table(results_file: str | Path, output_path: str | Path) -> None:
         r"\begin{table*}[t]",
         r"\caption{Compression-loss statistics for each data source after \texttt{int16}+\texttt{zlib}",
         r"encoding. For gridded products, errors are computed against a pre-encoding regional reference produced by the same formatting pipeline; for L3 track products, source swaths are conservatively binned to the target grid (no smoothing) and compared on overlapping valid cells only.",
-        r"Values report mean\,$\pm$\,std across all dates and ocean regions; for sparse-error cases, the reported P99 uses the non-zero error tail (while raw P99 is retained in the CSV).}",
+        r"Values report mean\,$\pm$\,std across all dates and ocean regions; for sparse-error cases, the reported P99 uses the non-zero error tail (while raw P99 is retained in the CSV).",
+        r"The noise-to-signal ratio is the RMSE normalised by the spatial standard deviation of the original field, indicating the compression error relative to the natural variability of each variable.}",
         r"\label{tab:compression_errors}",
-        r"\begin{tabular}{llcrrr}",
+        r"\begin{tabular}{llcrrrr}",
         r"\tophline",
-        r"Modality & Variable & Unit & RMSE (mean$\pm$std) & Bias (mean$\pm$std) & P99 Error (mean$\pm$std) \\",
+        r"Modality & Variable & Unit & RMSE (mean$\pm$std) & Bias (mean$\pm$std) & P99 Error (mean$\pm$std) & RMSE/$\sigma$ (mean$\pm$std) \\",
         r"\middlehline",
     ]
 
@@ -1293,8 +1448,9 @@ def save_latex_table(results_file: str | Path, output_path: str | Path) -> None:
         rmse_str = fmt(vals["RMSE"])
         bias_str = fmt(vals["Bias"])
         p99_str  = fmt(vals["P99_Error"])
+        n2s_str  = fmt(vals["Noise_To_Signal"])
         lines.append(
-            rf"{mod_cell} & {var_display} & {unit} & {rmse_str} & {bias_str} & {p99_str} \\"
+            rf"{mod_cell} & {var_display} & {unit} & {rmse_str} & {bias_str} & {p99_str} & {n2s_str} \\"
         )
 
     lines += [
@@ -1370,7 +1526,10 @@ def main():
     )
     args = parser.parse_args()
 
-    logging.info(f"Using formatter pipeline from: {_PIPELINE_SOURCE}")
+    logging.info(
+        f"Using formatter pipeline from: {pipeline_constants.__name__} "
+        f"({Path(pipeline_constants.__file__).parent})"
+    )
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -1474,6 +1633,8 @@ def main():
         "P99_Uses_NonZero",
         "Error_NonZero_Fraction",
         "Bias",
+        "Field_Std",
+        "Noise_To_Signal",
         "Orig_Min",
         "Orig_Max",
         "Fmt_Min",

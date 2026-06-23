@@ -76,9 +76,10 @@ def get_variable_encoding(var_name):
         
     # SST / Thetao (Degrees Celsius)
     # Range typically -2 to 35 C.
-    # Precision: 0.001 C
+    # Precision: 0.01 C -- matches the source L4 SST native int16 step (scale 0.01 K);
+    # finer scales would over-resolve already-quantised data (sub-quantisation artefact).
     if any(x in v for x in ['sst', 'thetao', 'temperature']):
-        return {**base, "dtype": "int16", "scale_factor": 0.001, "add_offset": 20.0}
+        return {**base, "dtype": "int16", "scale_factor": 0.01, "add_offset": 20.0}
         
     # SSS / Salinity (PSU)
     # Some products can exceed 45 PSU (observed up to ~62.7 in SMOS fields).
@@ -522,9 +523,10 @@ def load_l4_sst_data(data_dir, date_str):
         dataset_glob = 'METOFFICE-GLO-SST-L4-REP-OBS-SST_*'
         fname_pattern = f'{date_str}*-UKMO-L4_GHRSST-SSTfnd-OSTIA-GLOB*REP*.nc'
     else:
-        # NRT product
+        # NRT product. The dataset dir is 'METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2'
+        # (a '-V2' suffix, no '_<ver>' tail), so the glob must not require a trailing '_*'.
         product = 'SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001'
-        dataset_glob = 'METOFFICE-GLO-SST-L4-NRT-OBS-SST*_*'
+        dataset_glob = 'METOFFICE-GLO-SST-L4-NRT-OBS-SST*'
         fname_pattern = f'{date_str}*-UKMO-L4_GHRSST-SSTfnd-OSTIA-GLOB*.nc'
 
     dataset_dirs = glob.glob(os.path.join(data_dir, 'l4_sst', product, dataset_glob))

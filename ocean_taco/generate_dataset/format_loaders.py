@@ -81,9 +81,10 @@ def load_l4_sst_data(data_dir, date_str):
         dataset_glob = "METOFFICE-GLO-SST-L4-REP-OBS-SST_*"
         fname_pattern = f"{date_str}*-UKMO-L4_GHRSST-SSTfnd-OSTIA-GLOB*REP*.nc"
     else:
-        # NRT product
+        # NRT product. The dataset dir is 'METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2'
+        # (a '-V2' suffix, no '_<ver>' tail), so the glob must not require a trailing '_*'.
         product = "SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001"
-        dataset_glob = "METOFFICE-GLO-SST-L4-NRT-OBS-SST*_*"
+        dataset_glob = "METOFFICE-GLO-SST-L4-NRT-OBS-SST*"
         fname_pattern = f"{date_str}*-UKMO-L4_GHRSST-SSTfnd-OSTIA-GLOB*.nc"
 
     dataset_dirs = glob.glob(os.path.join(data_dir, "l4_sst", product, dataset_glob))
