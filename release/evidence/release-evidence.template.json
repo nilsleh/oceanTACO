@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "release_version": "0.1.0",
+  "dataset_revision": "878befc437a49cbf584353efc7346ebe705e743c",
+  "steps": {
+    "reference_recipe": {
+      "status": "incomplete",
+      "evidence": [],
+      "recipe_id": "",
+      "patch_sizes_km": [],
+      "grid_spacings": {},
+      "canonical_dates_sha256": "",
+      "registered_tokens": [],
+      "ocean_mask_id": "",
+      "dataset_revision": "878befc437a49cbf584353efc7346ebe705e743c"
+    },
+    "core_integration": {
+      "status": "incomplete",
+      "evidence": [],
+      "dataset_revision": "878befc437a49cbf584353efc7346ebe705e743c",
+      "command": "",
+      "environment": "",
+      "asset_checksums": {}
+    },
+    "reference_querysets": {
+      "status": "incomplete",
+      "evidence": [],
+      "manifests": {
+        "128-training": "",
+        "128-eval": "",
+        "256-training": "",
+        "256-eval": "",
+        "512-training": "",
+        "512-eval": ""
+      },
+      "regeneration_command": "",
+      "regeneration_hashes": {}
+    },
+    "runtime_benchmark": {
+      "status": "incomplete",
+      "evidence": [],
+      "access_mode": "local_immutable_cache",
+      "command": "",
+      "hardware": "",
+      "cache_states": [],
+      "worker_count": null,
+      "duration_seconds": null,
+      "p50_seconds": null,
+      "p95_seconds": null,
+      "samples_per_second": null,
+      "golden_patchset": ""
+    },
+    "paper_reproduction": {
+      "status": "incomplete",
+      "evidence": [],
+      "baseline_fixtures": [],
+      "reproduction_command": "",
+      "tutorial_command": ""
+    },
+    "legacy_removal": {
+      "status": "incomplete",
+      "evidence": [],
+      "legacy_namespace_absent": false
+    },
+    "packaging": {
+      "status": "incomplete",
+      "evidence": [],
+      "base_smoke": "",
+      "hf_smoke": "",
+      "viz_smoke": "",
+      "tutorials_smoke": "",
+      "docs_build": "",
+      "wheel": "",
+      "testpypi_smoke": ""
+    },
+    "core_pilot": {
+      "status": "incomplete",
+      "evidence": [],
+      "patchset": "",
+      "coverage_distribution": "",
+      "valid_fraction_distribution": "",
+      "point_count_distribution": "",
+      "science_review": ""
+    }
+  }
+}
