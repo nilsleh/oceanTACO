@@ -29,6 +29,18 @@ def _seam_distance_degrees(first: float, second: float) -> float:
     return abs(((first - second + 180.0) % 360.0) - 180.0)
 
 
+def _snap_tolerance_km(axis: np.ndarray, scale_km: float) -> float:
+    """Return the largest separation error snapping to ``axis`` can introduce.
+
+    Both endpoints of a step are moved to their nearest cell centre, each by at
+    most half a cell, so a realised step can fall short of the requested one by
+    up to a full cell.
+    """
+    if axis.size < 2:
+        return 0.0
+    return float(np.abs(np.diff(axis)).max()) * scale_km
+
+
 def _row_longitudes(
     mask: OceanMaskArtifact, latitude: float, spacing_km: float
 ) -> np.ndarray:
@@ -36,30 +48,30 @@ def _row_longitudes(
     longitude_step = spacing_km / (
         KM_PER_DEGREE_LATITUDE * max(cos(radians(latitude)), 1e-12)
     )
+    scale_km = KM_PER_DEGREE_LATITUDE * max(cos(radians(latitude)), 1e-12)
+    tolerance_km = _snap_tolerance_km(mask.lon, scale_km)
     targets = np.arange(-180.0, 180.0, longitude_step, dtype=np.float64)
     selected: list[float] = []
     for target in targets:
         candidate = float(mask.lon[_nearest_index(mask.lon, target)])
         if candidate in selected:
             continue
-        # Snapping can make a requested step fractionally smaller.  Keeping
-        # the earlier canonical candidate guarantees the documented minimum
-        # separation instead of merely claiming the nominal spacing.
+        # Snapping moves each endpoint by up to half a mask cell, so a step
+        # requested at exactly ``spacing_km`` can land up to a full cell short
+        # of it.  Rejecting on that rounding noise would drop the row entirely
+        # and leave a gap of twice the spacing -- far worse than the
+        # sub-cell shortfall it avoids.  Only a genuine shortfall, beyond what
+        # snapping can explain, is rejected.
         if selected:
             nearest = min(
                 _seam_distance_degrees(candidate, other) for other in selected
             )
-            nearest_km = nearest * KM_PER_DEGREE_LATITUDE * cos(radians(latitude))
-            if nearest_km + 1e-9 < spacing_km:
+            if nearest * scale_km + tolerance_km < spacing_km:
                 continue
         selected.append(candidate)
     if len(selected) > 1:
-        seam_km = (
-            _seam_distance_degrees(selected[0], selected[-1])
-            * KM_PER_DEGREE_LATITUDE
-            * cos(radians(latitude))
-        )
-        if seam_km + 1e-9 < spacing_km:
+        seam_km = _seam_distance_degrees(selected[0], selected[-1]) * scale_km
+        if seam_km + tolerance_km < spacing_km:
             selected.pop()
     return np.asarray(sorted(selected), dtype=np.float64)
 
@@ -70,12 +82,16 @@ def _row_latitudes(mask: OceanMaskArtifact, spacing_km: float) -> np.ndarray:
     targets = np.arange(
         float(mask.lat[0]), float(mask.lat[-1]) + requested_step / 2.0, requested_step
     )
+    tolerance_km = _snap_tolerance_km(mask.lat, KM_PER_DEGREE_LATITUDE)
     selected: list[float] = []
     for target in targets:
         candidate = float(mask.lat[_nearest_index(mask.lat, target)])
+        # See ``_row_longitudes``: reject only a shortfall that snapping to the
+        # mask cannot account for, never mere sub-cell rounding noise.
         if (
             selected
-            and (candidate - selected[-1]) * KM_PER_DEGREE_LATITUDE + 1e-9 < spacing_km
+            and (candidate - selected[-1]) * KM_PER_DEGREE_LATITUDE + tolerance_km
+            < spacing_km
         ):
             continue
         if not selected or candidate != selected[-1]:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from math import cos, radians
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -9,7 +11,13 @@ import xarray as xr
 from ocean_taco import CatalogConfig
 from ocean_taco.access import LocalCacheBackend
 from ocean_taco.filter import CoverageRequirement, QueryFilter
-from ocean_taco.geobox import GeoBox, PatchSize, PatchSpec, TimeRange
+from ocean_taco.geobox import (
+    KM_PER_DEGREE_LATITUDE,
+    GeoBox,
+    PatchSize,
+    PatchSpec,
+    TimeRange,
+)
 from ocean_taco.manifest import QuerySet, content_sha256, position_id
 from ocean_taco.render import (
     Native,
@@ -20,6 +28,7 @@ from ocean_taco.render import (
     crop_dense,
 )
 from ocean_taco.sampling import (
+    GRID_SPACING_RATIO,
     DenseCoverage,
     OceanMaskArtifact,
     area_share_ratios,
@@ -29,6 +38,7 @@ from ocean_taco.sampling import (
     maximum_pair_iou,
 )
 from ocean_taco.sampling.draw import draw_queryset, replay_experiment
+from ocean_taco.sampling.grids import _row_latitudes, _row_longitudes
 from ocean_taco.torch import CoreSourceLoader, OceanTACODataset, collate_ocean_samples
 
 
@@ -307,7 +317,16 @@ def test_constant_physical_grid_is_unweighted_trimmed_and_overlap_bounded():
         ).item()
         for row in positions
     )
-    assert maximum_pair_iou(positions, patch) <= 0.2 + 1e-12
+    # Nominal 2/3 spacing gives IoU 0.2 for exactly-placed neighbours.  Centres
+    # must snap to mask cells, and this fixture's 0.1 deg cell is over half the
+    # 20 km patch, so the realised offset can differ from nominal by a full
+    # cell.  Bound the IoU by what that quantisation permits rather than by the
+    # unreachable nominal value.
+    cell_fraction = 0.1 / patch.to_degrees(0.0)[1]
+    worst_offset = 2.0 / 3.0 - cell_fraction
+    assert maximum_pair_iou(positions, patch) <= (1 - worst_offset) / (
+        1 + worst_offset
+    ) + 1e-12
     assert area_share_ratios({"low": 10, "high": 20}, {"low": 1.0, "high": 2.0}) == {
         "low": 1.0,
         "high": 1.0,
@@ -598,3 +617,77 @@ def test_local_cache_is_revision_qualified_atomic_and_reuses_a_worker_handle(tmp
     with pytest.raises(ValueError, match="one concrete"):
         cache.path_for("../escape", "NORTH_ATLANTIC", "l4_sst.nc")
     cache.close()
+
+
+def test_snapped_row_spacing_never_doubles_from_rounding():
+    """Snapping to mask cells must not reject rows and leave double-width gaps.
+
+    Requesting a spacing that is already an exact multiple of the mask step is
+    the worst case: every candidate lands within rounding distance of the
+    minimum, so an intolerant comparison drops alternate rows and produces
+    holes twice the intended spacing.
+    """
+    mask = OceanMaskArtifact(
+        lat=np.arange(-10.0, 10.05, 0.1),
+        lon=np.arange(-10.0, 10.05, 0.1),
+        ocean_mask=np.ones((201, 201), dtype=bool),
+        manifest={},
+    )
+    for spacing_km in (115.2, 230.4, 460.8):
+        latitudes = _row_latitudes(mask, spacing_km)
+        steps = np.diff(latitudes) * KM_PER_DEGREE_LATITUDE
+        assert steps.max() < spacing_km * 1.5, (
+            f"latitude rows at {spacing_km} km gapped to {steps.max():.1f} km"
+        )
+        # ``_row_longitudes`` scans the whole globe, so every target outside
+        # this truncated fixture snaps onto its western boundary cell.  That
+        # first step is an artifact of the fixture, not a coverage gap.
+        longitudes = _row_longitudes(mask, 0.0, spacing_km)[1:]
+        lon_steps = np.diff(longitudes) * KM_PER_DEGREE_LATITUDE
+        assert lon_steps.max() < spacing_km * 1.5, (
+            f"longitude rows at {spacing_km} km gapped to {lon_steps.max():.1f} km"
+        )
+
+
+def test_eval_grid_footprints_tile_open_ocean_without_gaps():
+    """An eval grid over open ocean must leave no cell outside every footprint.
+
+    The eval spacing ratio is below 1.0 precisely so neighbouring footprints
+    overlap.  Any uncovered interior cell means the population cannot see part
+    of the domain it claims to evaluate.
+    """
+    mask = OceanMaskArtifact(
+        lat=np.arange(-20.0, 20.05, 0.1),
+        lon=np.arange(-20.0, 20.05, 0.1),
+        ocean_mask=np.ones((401, 401), dtype=bool),
+        manifest={},
+    )
+    patch_km = 256.0
+    positions = build_position_grid(
+        mask,
+        patch_size=PatchSize(patch_km, "km"),
+        spacing_km=patch_km * GRID_SPACING_RATIO["eval"],
+    )
+    assert positions
+
+    lat, lon = np.asarray(mask.lat), np.asarray(mask.lon)
+    covered = np.zeros((lat.size, lon.size), dtype=bool)
+    half_lat = patch_km / KM_PER_DEGREE_LATITUDE / 2.0
+    for row in positions:
+        centre_lat, centre_lon = row["centre_lat"], row["centre_lon"]
+        half_lon = (
+            patch_km / (KM_PER_DEGREE_LATITUDE * cos(radians(centre_lat))) / 2.0
+        )
+        rows = (lat >= centre_lat - half_lat) & (lat <= centre_lat + half_lat)
+        cols = (lon >= centre_lon - half_lon) & (lon <= centre_lon + half_lon)
+        covered[np.ix_(rows, cols)] = True
+
+    # Only the interior can be covered.  Centres are trimmed to keep whole
+    # footprints inside the mask, and ``_row_longitudes`` scans the whole globe
+    # so targets outside this truncated fixture pile onto its boundary cell.
+    # Both are edge artifacts, so assert over the interior clear of them.
+    margin = 4 * half_lat
+    interior_lat = (lat >= lat[0] + margin) & (lat <= lat[-1] - margin)
+    interior_lon = (lon >= lon[0] + margin) & (lon <= lon[-1] - margin)
+    interior = covered[np.ix_(interior_lat, interior_lon)]
+    assert interior.all(), f"{int((~interior).sum())} interior cells uncovered"
