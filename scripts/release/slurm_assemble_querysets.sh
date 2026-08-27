@@ -26,9 +26,13 @@ cd "${REPO}"
 mkdir -p logs
 source "${REPO}/venv_oceantaco/activate.sh"
 
+# The working tree carries unrelated in-progress edits to dataset generation
+# (download_sources.py, pyproject.toml), so --allow-dirty is required.  The
+# builder still records the exact commit in the code_commit provenance field.
 python scripts/release/build_querysets.py \
     --taco-path "${TACO_PATH}" \
     --output-root "${OUTPUT_ROOT}" \
     --patch-size 128 --patch-size 256 --patch-size 512 \
     --kind training --kind eval \
-    --stage assemble
+    --stage assemble \
+    --allow-dirty
