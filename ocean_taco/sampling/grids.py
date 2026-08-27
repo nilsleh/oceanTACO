@@ -50,7 +50,13 @@ def _row_longitudes(
     )
     scale_km = KM_PER_DEGREE_LATITUDE * max(cos(radians(latitude)), 1e-12)
     tolerance_km = _snap_tolerance_km(mask.lon, scale_km)
-    targets = np.arange(-180.0, 180.0, longitude_step, dtype=np.float64)
+    # Partition the circle exactly before snapping. ``arange`` leaves a
+    # residual final interval whenever 360 is not a multiple of the requested
+    # angular step; dropping its final point then adds that residual to the
+    # preceding interval at the antimeridian. An exact partition makes the
+    # nominal wrap-around interval identical to every interior interval.
+    n_columns = max(1, int(np.floor(360.0 / longitude_step)))
+    targets = -180.0 + np.arange(n_columns, dtype=np.float64) * (360.0 / n_columns)
     selected: list[float] = []
     for target in targets:
         candidate = float(mask.lon[_nearest_index(mask.lon, target)])
@@ -69,10 +75,6 @@ def _row_longitudes(
             if nearest * scale_km + tolerance_km < spacing_km:
                 continue
         selected.append(candidate)
-    if len(selected) > 1:
-        seam_km = _seam_distance_degrees(selected[0], selected[-1]) * scale_km
-        if seam_km + tolerance_km < spacing_km:
-            selected.pop()
     return np.asarray(sorted(selected), dtype=np.float64)
 
 
@@ -202,6 +204,11 @@ def latitude_band_counts(
             if low <= value < high or (index == len(bands) - 2 and value == high):
                 report[f"{low:g}-{high:g}"] += 1
                 break
+    if sum(report.values()) != len(positions):
+        raise AssertionError(
+            "latitude bands do not cover every position; extend the bands or "
+            "correct the position grid."
+        )
     return report
 
 

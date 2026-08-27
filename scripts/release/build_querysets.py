@@ -827,6 +827,7 @@ def compute_plan_id(
     dates: Sequence[str],
     ocean_mask,
     sets: Mapping[tuple[int, str], Mapping[str, Any]],
+    code_revision: str,
 ) -> str:
     """Identity of everything a shard's contents depend on.
 
@@ -844,6 +845,9 @@ def compute_plan_id(
             "tokens": list(BUILD_TOKENS),
             "dates": list(dates),
             "asset_identity": args.asset_identity,
+            # A shard embodies builder logic as well as its declared inputs.
+            # Without this, a resumed dirty build can mix old and new logic.
+            "code_commit": code_revision,
             "grids": [grid_signature(grids[token]) for token in DENSE_TOKENS],
             "positions": {
                 f"{size}-{kind}": [
@@ -891,7 +895,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     commit = code_commit(args.allow_dirty)
     lock_hash, lock_payload = environment_lock_hash(args.environment_lock)
     sets = build_sets(ocean_mask, grids, args.patch_sizes, args.kinds)
-    plan_id = compute_plan_id(args, grids, dates, ocean_mask, sets)
+    plan_id = compute_plan_id(args, grids, dates, ocean_mask, sets, commit)
     for key, entry in sorted(sets.items()):
         print(
             f"[plan] {key[0]}-{key[1]}: {len(entry['positions'])} positions "
@@ -922,6 +926,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "patch_sizes": args.patch_sizes,
             "kinds": args.kinds,
             "asset_identity": args.asset_identity,
+            # A shard embodies builder logic as well as its declared inputs.
+            # Without this, a resumed dirty build can mix old and new logic.
+            "code_commit": commit,
             "reference_dates": dates,
         }
         if todo and args.jobs > 1:

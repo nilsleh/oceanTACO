@@ -35,7 +35,7 @@ mkdir -p logs
 source "${REPO}/venv_oceantaco/activate.sh"
 
 # The working tree carries unrelated in-progress edits to dataset generation
-# (download_sources.py, pyproject.toml), so --allow-dirty is required.  The
+# (download_sources.py, build_taco.py, pyproject.toml), so --allow-dirty is required.  The
 # builder still records the exact commit in the code_commit provenance field.
 python scripts/release/build_querysets.py \
     --taco-path "${TACO_PATH}" \

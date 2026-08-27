@@ -14,10 +14,22 @@ cd "${REPO}"
 source venv_oceantaco/activate.sh
 
 echo "=========== ROUND-TRIP + INVARIANTS ==========="
-python scripts/release/checks/verify_published.py
+python scripts/release/checks/verify_published.py --positions-only --root "${ROOT}"
+
+echo "=========== OCEAN-MASK COVERAGE ==========="
+python scripts/release/checks/check_grid_coverage.py --root "${ROOT}"
+
+echo "=========== BLIND POSITION CHECK ==========="
+python scripts/release/checks/check_blind_positions.py --root "${ROOT}"
+
+echo "=========== SOURCE RECOVERY ==========="
+python scripts/release/checks/check_source_recovery.py --root "${ROOT}"
+
+echo "=========== ROUND-TRIP + INVARIANTS ==========="
+python scripts/release/checks/verify_published.py --root "${ROOT}"
 
 echo "=========== INDEPENDENT SPOT-CHECK ==========="
-python scripts/release/checks/spot_check_published.py
+python scripts/release/checks/spot_check_published.py --root "${ROOT}"
 
 echo "=========== MAP REPORTS ==========="
 for s in 512 256 128; do

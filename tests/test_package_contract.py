@@ -38,7 +38,7 @@ from ocean_taco.sampling import (
     maximum_pair_iou,
 )
 from ocean_taco.sampling.draw import draw_queryset, replay_experiment
-from ocean_taco.sampling.grids import _row_latitudes, _row_longitudes
+from ocean_taco.sampling.grids import _row_latitudes, _row_longitudes, _snap_tolerance_km, latitude_band_counts
 from ocean_taco.torch import CoreSourceLoader, OceanTACODataset, collate_ocean_samples
 
 
@@ -629,8 +629,8 @@ def test_snapped_row_spacing_never_doubles_from_rounding():
     """
     mask = OceanMaskArtifact(
         lat=np.arange(-10.0, 10.05, 0.1),
-        lon=np.arange(-10.0, 10.05, 0.1),
-        ocean_mask=np.ones((201, 201), dtype=bool),
+        lon=np.arange(-180.0, 180.0, 0.1),
+        ocean_mask=np.ones((201, 3600), dtype=bool),
         manifest={},
     )
     for spacing_km in (115.2, 230.4, 460.8):
@@ -691,3 +691,8 @@ def test_eval_grid_footprints_tile_open_ocean_without_gaps():
     interior_lon = (lon >= lon[0] + margin) & (lon <= lon[-1] - margin)
     interior = covered[np.ix_(interior_lat, interior_lon)]
     assert interior.all(), f"{int((~interior).sum())} interior cells uncovered"
+
+
+def test_latitude_band_counts_reject_uncovered_positions():
+    with pytest.raises(AssertionError, match="latitude bands"):
+        latitude_band_counts(({"centre_lat": 0.0}, {"centre_lat": 65.0}))

@@ -318,3 +318,59 @@ def test_all_tiles_without_primary_variable_returns_none(dense_tiles):
     stripped = {r: d.drop_vars("sla_filtered") for r, d in dense_tiles.items()}
     values, n_obs, measured = builder.dense_arrays(grid, stripped, "l3_ssh", want_n_obs=False)
     assert (values, n_obs, measured) == (None, None, frozenset())
+
+
+
+def test_scatter_tiles_matches_released_merge(dense_tiles):
+    """The builder's fast scatter must remain cell-identical to released merge."""
+    from ocean_taco.retrieve import _merge_grid_tiles
+
+    grid = build_global_grid("l3_ssh", dense_tiles)
+    released = _merge_grid_tiles(list(dense_tiles.values()), coordinate_tolerance=1e-4)
+    fast = scatter_tiles(
+        grid,
+        {
+            region: np.asarray(dataset["sla_filtered"].values[0], np.float32)
+            for region, dataset in dense_tiles.items()
+        },
+    )
+    np.testing.assert_array_equal(fast, released["sla_filtered"].values[0])
+
+
+def test_exact_crop_boundary_is_inclusive(ocean_mask):
+    """An exact degree edge must retain the boundary cells in the fast crop."""
+    from queryset_build import GlobalGrid, _segment_columns
+
+    grid = GlobalGrid(
+        "l3_ssh",
+        np.arange(-2.0, 3.0),
+        np.arange(-2.0, 3.0),
+        {},
+    )
+    patch = PatchSize(2.0, "deg")
+    box = patch.footprint(0.0, 0.0)
+    assert _segment_columns(grid.lon, box) == ((1, 4),)
+    plan = build_position_plan(
+        grid, patch_size=patch, centre_lon=0.0, centre_lat=0.0, ocean_mask=ocean_mask
+    )
+    assert (plan.row, plan.cols, plan.footprint_cells) == ((1, 4), ((1, 4),), 9)
+
+
+def test_plan_id_changes_when_code_revision_changes():
+    """A changed builder revision must invalidate resumable measurement shards."""
+    import argparse
+    import build_querysets as builder
+    from queryset_build import GlobalGrid
+
+    grid = GlobalGrid("l3_ssh", np.array([0.0]), np.array([0.0]), {})
+    args = argparse.Namespace(
+        patch_sizes=[128],
+        kinds=["eval"],
+        asset_identity="stat",
+    )
+    mask = type("Mask", (), {"artifact_id": "mask"})()
+    sets = {(128, "eval"): {"positions": ({"position_id": "position"},)}}
+    grids = {token: grid for token in builder.DENSE_TOKENS}
+    first = builder.compute_plan_id(args, grids, ["2024-01-01"], mask, sets, "commit-a")
+    second = builder.compute_plan_id(args, grids, ["2024-01-01"], mask, sets, "commit-b")
+    assert first != second

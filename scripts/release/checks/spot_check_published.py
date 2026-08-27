@@ -3,22 +3,35 @@
 Uses only RELEASED measurement functions on directly-opened source files;
 no builder code participates in computing the expected values.
 """
+import argparse
 import os, random, numpy as np, xarray as xr
+from pathlib import Path
 from ocean_taco.manifest import QuerySet
 from ocean_taco.registry import get_modality
 from ocean_taco.sampling.ocean_mask import load_released_ocean_mask
 from ocean_taco.sampling.coverage import measure_dense_coverage, measure_argo_profile_count
 from ocean_taco.retrieve import _REGION_BOUNDS, _intersects, _merge_points, _clean_swot
 
-ROOT="/p/project1/hai_uqmethodbox/data/new_ssh_dataset_taco_folder/OceanTACO/DATA"
+DATA_ROOT="/p/project1/hai_uqmethodbox/data/new_ssh_dataset_taco_folder/OceanTACO/DATA"
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--root", type=Path, default=Path(os.environ.get("ROOT", "release/querysets/v1")))
+parser.add_argument("--sets", default="512-training,256-eval,128-training")
+parser.add_argument("--draws", type=int, default=10)
+parser.add_argument("--position-index", type=int, default=None)
+parser.add_argument("--date-index", type=int, default=None)
+args = parser.parse_args()
+queryset_root = args.root
 mask=load_released_ocean_mask()
 random.seed(20260826)
 ok=fail=0; details=[]
-for setname in ("512-training","256-eval","128-training"):
-    qs=QuerySet.read(f"release/querysets/v1/{setname}")
+for setname in (name for name in args.sets.split(",") if name):
+    qs=QuerySet.read(queryset_root / setname)
     ps=qs.patch_size
-    for _ in range(10):
-        pi=random.randrange(len(qs.positions)); di=random.randrange(len(qs.dates))
+    for _ in range(args.draws):
+        pi = args.position_index if args.position_index is not None else random.randrange(len(qs.positions))
+        di = args.date_index if args.date_index is not None else random.randrange(len(qs.dates))
+        if not 0 <= pi < len(qs.positions) or not 0 <= di < len(qs.dates):
+            raise ValueError("--position-index/--date-index lie outside the selected QuerySet.")
         pos=qs.positions[pi]; lon0,lat0=float(pos["centre_lon"]),float(pos["centre_lat"])
         date=qs.dates[di][:10]; dd=date.replace("-","_")
         box=ps.footprint(lon0,lat0)
@@ -26,7 +39,7 @@ for setname in ("512-training","256-eval","128-training"):
         row=qs.coverage_row(pi,di)
         for token,key in (("l3_ssh","ssh"),("l3_swot","swot")):
             spec=get_modality(token)
-            paths=[f"{ROOT}/{dd}/{r}/{spec.filename}" for r in regs]
+            paths=[f"{DATA_ROOT}/{dd}/{r}/{spec.filename}" for r in regs]
             usable=[]
             for p in paths:
                 if not os.path.exists(p): usable=None; break
@@ -58,7 +71,7 @@ for setname in ("512-training","256-eval","128-training"):
                 if row["swot_n_obs_sum"]!=ref.n_obs_sum:
                     print(f"NOBS MISMATCH {setname} {date} {lon0:.2f},{lat0:.2f} got={row['swot_n_obs_sum']} exp={ref.n_obs_sum}"); fail+=1
                 else: ok+=1
-        ap=[f"{ROOT}/{dd}/{r}/argo.nc" for r in _REGION_BOUNDS]
+        ap=[f"{DATA_ROOT}/{dd}/{r}/argo.nc" for r in _REGION_BOUNDS]
         if all(os.path.exists(p) for p in ap):
             tiles=[xr.open_dataset(p,engine="h5netcdf") for p in ap]
             ref=measure_argo_profile_count(_merge_points(tiles),patch_size=ps,centre_lon=lon0,centre_lat=lat0,date=date)
@@ -70,3 +83,4 @@ for setname in ("512-training","256-eval","128-training"):
             else: ok+=1
     print(f"...{setname} done", flush=True)
 print(f"\nSPOT-CHECK: {ok} agreements, {fail} mismatches")
+raise SystemExit(1 if fail else 0)
