@@ -1,4 +1,4 @@
-"""Independently verify that published footprints cover the released ocean mask.
+"""Independently verify that published footprints cover open ocean.
 
 This deliberately reads only positions.parquet. QuerySet.read would materialise
 the full coverage table, which is irrelevant to a geometric coverage check.
@@ -16,16 +16,6 @@ from scipy import ndimage
 
 from ocean_taco.geobox import PatchSize
 from ocean_taco.sampling.ocean_mask import load_released_ocean_mask
-
-# 1.5x the post-fix measurements, leaving room for ordinary coastline slivers.
-LIMITS = {
-    "128-eval": (0.018, 0.018),
-    "256-eval": (0.030, 0.030),
-    "512-eval": (0.040, 0.040),
-    "128-training": (0.005, 0.005),
-    "256-training": (0.006, 0.006),
-    "512-training": (0.012, 0.012),
-}
 
 
 def _largest_component_fraction(uncovered: np.ndarray, ocean_cells: int) -> float:
@@ -55,6 +45,56 @@ def _largest_component_fraction(uncovered: np.ndarray, ocean_cells: int) -> floa
     return float(sizes.max() / ocean_cells)
 
 
+def open_ocean_mask(mask, patch_size: PatchSize) -> np.ndarray:
+    """Return mask cells whose complete patch is inside the ocean-mask domain.
+
+    Published positions are deliberately restricted to ocean centres, so their
+    footprint union need not cover coastal slivers. It also cannot cover the
+    mandatory latitude edge margin: no full patch is admitted there. This mask
+    defines the independent, meaningful coverage population instead. A
+    conservative mask-cell rectangle is used: it may exclude an extra edge
+    cell, but can never classify a coastal cell as open ocean.
+    """
+    ocean = mask.ocean_mask
+    rows, columns = ocean.shape
+    lat_step = float(np.abs(np.diff(mask.lat)).max())
+    lon_step = float(np.abs(np.diff(mask.lon)).max())
+    half_rows = int(np.ceil(patch_size.to_degrees(0.0)[1] / (2.0 * lat_step)))
+
+    # Prefix sums let each latitude row inspect all wrapped longitude windows
+    # without consulting the grid builder or the published positions.
+    land = np.tile(~ocean, (1, 3)).astype(np.int64)
+    prefix = np.pad(land.cumsum(axis=0).cumsum(axis=1), ((1, 0), (1, 0)))
+
+    def rectangle_sum(
+        row_start: int, row_stop: int, col_start: np.ndarray, col_stop: np.ndarray
+    ) -> np.ndarray:
+        return (
+            prefix[row_stop, col_stop]
+            - prefix[row_start, col_stop]
+            - prefix[row_stop, col_start]
+            + prefix[row_start, col_start]
+        )
+
+    result = np.zeros_like(ocean, dtype=bool)
+    centres = np.arange(columns) + columns
+    for row, latitude in enumerate(mask.lat):
+        row_start, row_stop = row - half_rows, row + half_rows + 1
+        if row_start < 0 or row_stop > rows:
+            continue
+        half_columns = int(
+            np.ceil(patch_size.to_degrees(float(latitude))[0] / (2.0 * lon_step))
+        )
+        land_cells = rectangle_sum(
+            row_start,
+            row_stop,
+            centres - half_columns,
+            centres + half_columns + 1,
+        )
+        result[row] = ocean[row] & (land_cells == 0)
+    return result
+
+
 def _coverage(mask, positions: Path, patch_size: PatchSize) -> np.ndarray:
     table = pq.read_table(positions, columns=["centre_lon", "centre_lat"])
     covered = np.zeros(mask.ocean_mask.shape, dtype=bool)
@@ -74,31 +114,43 @@ def _coverage(mask, positions: Path, patch_size: PatchSize) -> np.ndarray:
 
 
 def check(root: Path) -> list[str]:
-    """Return geometric coverage failures for every required released set."""
+    """Return open-ocean coverage failures for every required released set."""
     mask = load_released_ocean_mask()
     ocean_cells = int(mask.ocean_mask.sum())
     failures = []
-    for name, (fraction_limit, component_limit) in LIMITS.items():
+    open_ocean_by_patch: dict[PatchSize, np.ndarray] = {}
+    for name in (
+        "128-eval",
+        "256-eval",
+        "512-eval",
+        "128-training",
+        "256-training",
+        "512-training",
+    ):
         directory = root / name
         header = json.loads((directory / "header.json").read_text(encoding="utf-8"))
         patch_size = PatchSize(
             float(header["patch_size"]["value"]), str(header["patch_size"]["unit"])
         )
         covered = _coverage(mask, directory / "positions.parquet", patch_size)
-        uncovered = mask.ocean_mask & ~covered
-        fraction = float(uncovered.sum() / ocean_cells)
-        largest = _largest_component_fraction(uncovered, ocean_cells)
+        if patch_size not in open_ocean_by_patch:
+            open_ocean_by_patch[patch_size] = open_ocean_mask(mask, patch_size)
+        open_ocean = open_ocean_by_patch[patch_size]
+        uncovered = open_ocean & ~covered
+        open_ocean_cells = int(open_ocean.sum())
+        full_uncovered = mask.ocean_mask & ~covered
+        fraction = float(uncovered.sum() / open_ocean_cells)
+        largest = _largest_component_fraction(uncovered, open_ocean_cells)
         print(
-            f"{name:14s} uncovered={fraction:.3%} largest-component={largest:.3%}",
+            f"{name:14s} open-ocean-uncovered={fraction:.3%} "
+            f"largest-component={largest:.3%} "
+            f"full-ocean-uncovered={full_uncovered.sum() / ocean_cells:.3%}",
             flush=True,
         )
-        if fraction > fraction_limit:
+        if uncovered.any():
             failures.append(
-                f"{name}: uncovered-ocean fraction {fraction:.3%} exceeds {fraction_limit:.3%}"
-            )
-        if largest > component_limit:
-            failures.append(
-                f"{name}: largest uncovered component {largest:.3%} exceeds {component_limit:.3%}"
+                f"{name}: {uncovered.sum()}/{open_ocean_cells} open-ocean cells are "
+                f"outside every published footprint; largest component={largest:.3%}"
             )
     return failures
 

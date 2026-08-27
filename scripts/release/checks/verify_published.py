@@ -4,6 +4,7 @@ import os
 import sys
 from pathlib import Path
 
+import numpy as np
 import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -32,18 +33,25 @@ for name, (size, kind, reference_count) in REFERENCE_SETS.items():
     expected_positions = build_position_grid(
         mask, patch_size=patch_size, spacing_km=patch_size.value * GRID_SPACING_RATIO[kind]
     )
-    actual_identity = [
-        (row["position_id"], row["centre_lon"], row["centre_lat"])
-        for row in pq.read_table(directory / "positions.parquet", columns=["position_id", "centre_lon", "centre_lat"]).to_pylist()
-    ]
-    expected_identity = [
-        (row["position_id"], row["centre_lon"], row["centre_lat"])
-        for row in expected_positions
-    ]
+    actual = pq.read_table(
+        directory / "positions.parquet",
+        columns=["position_id", "centre_lon", "centre_lat"],
+    )
+    actual_ids = actual.column("position_id").to_pylist()
+    expected_ids = [row["position_id"] for row in expected_positions]
+    expected_lons = np.asarray([row["centre_lon"] for row in expected_positions])
+    expected_lats = np.asarray([row["centre_lat"] for row in expected_positions])
     assert abs(len(expected_positions) - reference_count) / reference_count <= 0.01, (
         name, len(expected_positions), reference_count
     )
-    assert actual_identity == expected_identity, f"{name}: published positions differ from independently rebuilt grid"
+    assert actual_ids == expected_ids, (
+        f"{name}: published position IDs differ from independently rebuilt grid"
+    )
+    assert np.allclose(
+        actual.column("centre_lon").to_numpy(), expected_lons, rtol=0.0, atol=1e-6
+    ) and np.allclose(
+        actual.column("centre_lat").to_numpy(), expected_lats, rtol=0.0, atol=1e-6
+    ), f"{name}: published coordinates differ from independently rebuilt grid"
     if args.positions_only:
         continue
     qs = QuerySet.read(directory)

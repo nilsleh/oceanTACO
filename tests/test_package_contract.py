@@ -38,7 +38,13 @@ from ocean_taco.sampling import (
     maximum_pair_iou,
 )
 from ocean_taco.sampling.draw import draw_queryset, replay_experiment
-from ocean_taco.sampling.grids import _row_latitudes, _row_longitudes, _snap_tolerance_km, latitude_band_counts
+from ocean_taco.sampling.grids import (
+    _longitude_spacing_bounds,
+    _row_latitudes,
+    _row_longitudes,
+    _seam_distance_degrees,
+    latitude_band_counts,
+)
 from ocean_taco.torch import CoreSourceLoader, OceanTACODataset, collate_ocean_samples
 
 
@@ -639,14 +645,13 @@ def test_snapped_row_spacing_never_doubles_from_rounding():
         assert steps.max() < spacing_km * 1.5, (
             f"latitude rows at {spacing_km} km gapped to {steps.max():.1f} km"
         )
-        # ``_row_longitudes`` scans the whole globe, so every target outside
-        # this truncated fixture snaps onto its western boundary cell.  That
-        # first step is an artifact of the fixture, not a coverage gap.
-        longitudes = _row_longitudes(mask, 0.0, spacing_km)[1:]
-        lon_steps = np.diff(longitudes) * KM_PER_DEGREE_LATITUDE
-        assert lon_steps.max() < spacing_km * 1.5, (
-            f"longitude rows at {spacing_km} km gapped to {lon_steps.max():.1f} km"
-        )
+        longitudes = _row_longitudes(mask, 0.0, spacing_km)
+        lon_steps = np.r_[
+            np.diff(longitudes), _seam_distance_degrees(longitudes[0], longitudes[-1])
+        ] * KM_PER_DEGREE_LATITUDE
+        lower, upper = _longitude_spacing_bounds(mask, 0.0, spacing_km)
+        assert lon_steps.min() >= lower
+        assert lon_steps.max() <= upper
 
 
 def test_eval_grid_footprints_tile_open_ocean_without_gaps():

@@ -41,6 +41,26 @@ def _snap_tolerance_km(axis: np.ndarray, scale_km: float) -> float:
     return float(np.abs(np.diff(axis)).max()) * scale_km
 
 
+def _longitude_spacing_bounds(
+    mask: OceanMaskArtifact, latitude: float, spacing_km: float
+) -> tuple[float, float]:
+    """Return realised-step bounds for one circular, snapped longitude row.
+
+    A global row has an integer number of intervals. Distributing 360 degrees
+    exactly therefore adds a small, unavoidable partition adjustment above the
+    requested step when floor(360 / requested_step) is not exact. The
+    remaining error is ordinary mask-cell snapping.
+    """
+    scale_km = KM_PER_DEGREE_LATITUDE * max(cos(radians(latitude)), 1e-12)
+    requested_degrees = spacing_km / scale_km
+    n_columns = max(1, int(np.floor(360.0 / requested_degrees)))
+    snap_tolerance_km = _snap_tolerance_km(mask.lon, scale_km)
+    return (
+        spacing_km - snap_tolerance_km,
+        (360.0 / n_columns) * scale_km + snap_tolerance_km,
+    )
+
+
 def _row_longitudes(
     mask: OceanMaskArtifact, latitude: float, spacing_km: float
 ) -> np.ndarray:
