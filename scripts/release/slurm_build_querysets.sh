@@ -42,5 +42,4 @@ python scripts/release/build_querysets.py \
     --stage measure \
     --jobs "${JOBS}" \
     --shard-index "${SLURM_ARRAY_TASK_ID:-0}" \
-    --shard-count "${SLURM_ARRAY_TASK_COUNT:-1}" \
-    --allow-dirty
+    --shard-count "${SLURM_ARRAY_TASK_COUNT:-1}"

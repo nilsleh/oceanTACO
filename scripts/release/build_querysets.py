@@ -826,8 +826,16 @@ def compute_plan_id(
     grids: Mapping[str, GlobalGrid],
     dates: Sequence[str],
     ocean_mask,
+    sets: Mapping[tuple[int, str], Mapping[str, Any]],
 ) -> str:
-    """Identity of everything a shard's contents depend on."""
+    """Identity of everything a shard's contents depend on.
+
+    The position identities are part of this, not merely the inputs that
+    ought to determine them.  A shard stores one row per position, so any
+    change to how centres are placed -- a grid construction fix included --
+    must invalidate existing shards even though every declared input above
+    is unchanged.
+    """
     return content_sha256(
         {
             "ocean_mask_id": ocean_mask.artifact_id,
@@ -837,6 +845,12 @@ def compute_plan_id(
             "dates": list(dates),
             "asset_identity": args.asset_identity,
             "grids": [grid_signature(grids[token]) for token in DENSE_TOKENS],
+            "positions": {
+                f"{size}-{kind}": [
+                    row["position_id"] for row in sets[(size, kind)]["positions"]
+                ]
+                for size, kind in sorted(sets)
+            },
         }
     )
 
@@ -876,9 +890,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     revision = dataset_revision(args.taco_path, catalog_sha, args.dataset_revision)
     commit = code_commit(args.allow_dirty)
     lock_hash, lock_payload = environment_lock_hash(args.environment_lock)
-    plan_id = compute_plan_id(args, grids, dates, ocean_mask)
-
     sets = build_sets(ocean_mask, grids, args.patch_sizes, args.kinds)
+    plan_id = compute_plan_id(args, grids, dates, ocean_mask, sets)
     for key, entry in sorted(sets.items()):
         print(
             f"[plan] {key[0]}-{key[1]}: {len(entry['positions'])} positions "

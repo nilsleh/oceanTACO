@@ -31,5 +31,4 @@ python scripts/release/build_querysets.py \
     --output-root "${OUTPUT_ROOT}" \
     --patch-size 128 --patch-size 256 --patch-size 512 \
     --kind training --kind eval \
-    --stage assemble \
-    --allow-dirty
+    --stage assemble
