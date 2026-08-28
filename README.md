@@ -80,7 +80,7 @@ pip install -e ".[generate,hf,tests]"
 
 - `ocean_taco/dataset/`: main user API for loading data and generating queries.
 - `ocean_taco/generate_dataset/`: data acquisition and dataset build pipeline.
-- [Dataset generation guide](docs/dataset_generation.md): verified raw-data formatting, TACO build, and smoke-test instructions. The current downloader is L3-SSH-only; a complete raw archive is required for a full build.
+- [Dataset generation guide](docs/dataset_generation.md): exemplary download, formatting, TACO build, and smoke-test instructions.
 - `ocean_taco/viz/`: visualization and analysis scripts.
 - `notebooks/`: tutorial and task-focused notebooks.
 

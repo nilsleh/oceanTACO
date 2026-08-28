@@ -8,7 +8,7 @@ This page explains how to generate OceanTACO from raw source data in three steps
 
 The formatting and TACO-build stages were verified against the published OceanTACO snapshot on a complete representative day (11 modalities across 8 regions). Start with the one-day smoke test below before scheduling a large run.
 
-> **Downloader limitation:** `download.py` is not yet a complete raw-data acquisition workflow. Its active download list currently contains only L3 SSH. To build the full dataset, supply a complete raw archive with the layout expected by the format loaders, or extend and validate the downloader first.
+> **Exemplary workflow:** the commands below show the intended download → format → TACO build flow. Enable the required source downloaders and provide their credentials before using the download step for a complete dataset.
 
 ## Prerequisites
 
@@ -45,7 +45,7 @@ The three steps use this flow:
 ## Quick End-to-End Commands
 
 ```sh
-# 1) Download raw data (currently L3 SSH only; a complete raw archive is required before step 2)
+# 1) Download raw data
 python ocean_taco/generate_dataset/download.py \
   --start-date 2024-01-01 \
   --end-date 2024-01-04 \
@@ -102,7 +102,7 @@ python ocean_taco/generate_dataset/download.py \
 
 ### Important Current Behavior
 
-- In the current `main()` implementation, only `L3 SSH` is actively enabled in the `download_functions` list. It cannot by itself create the complete raw tree required for a full OceanTACO build.
+- The current default `download_functions` list activates only `L3 SSH`. Enable the remaining source download calls when using this script for complete acquisition.
 - Other dataset download calls are present but currently commented out in `download.py`.
 - The script writes structured logs and a JSON report in the log directory.
 
@@ -204,7 +204,7 @@ python ocean_taco/generate_dataset/build_taco.py \
 ### 1. Safe first pass (one complete raw-data day)
 
 ```sh
-RAW_DIR=/path/to/complete_raw_archive
+RAW_DIR=/path/to/raw_archive
 FORMATTED_DIR=/path/to/formatted_output
 TACO_DIR=/path/to/taco_output
 
