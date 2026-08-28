@@ -18,13 +18,6 @@ Install generation dependencies from the repository root:
 pip install -e ".[generate]"
 ```
 
-On JSC systems using the repository UV template:
-
-```sh
-source sc-venv-template-uv/activate.sh
-unset PYTHONPATH
-```
-
 If you use conda in this repo:
 
 ```sh
