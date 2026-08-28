@@ -52,7 +52,11 @@ def get_variable_encoding(var_name):
     # Precision: 0.001 PSU
     # Use exact match or start/end to avoid catching 'so' within 'source' or 'solar'.
     # 'sos' = L4 SSS Copernicus variable; 'salinity' in v catches 'sea_surface_salinity' (L3 SMOS).
-    if v in ["sss", "so", "sos", "salinity"] or "salinity" in v or v.startswith("sss_") or v.endswith("_sss"):
+    # Published GLORYS ``so`` uses a distinct 0.001/25 packing scheme.  Keep
+    # that compatibility contract separate from the broader SSS convention.
+    if v == "so":
+        return {**base, "dtype": "int16", "scale_factor": 0.001, "add_offset": 25.0}
+    if v in ["sss", "sos", "salinity"] or "salinity" in v or v.startswith("sss_") or v.endswith("_sss"):
         return {**base, "dtype": "int16", "scale_factor": 0.002, "add_offset": 30.0}
 
     # Ocean Velocities (m/s)

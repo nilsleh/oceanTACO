@@ -27,6 +27,7 @@ from ocean_taco.generate_dataset.format_loaders import (
     load_l4_wind_data,
 )
 from ocean_taco.generate_dataset.format_processors import (
+    apply_published_metadata_compatibility,
     process_and_split,
     process_argo_data,
     process_glorys_data,
@@ -174,6 +175,9 @@ def process_date(
         except Exception as e:
             raise RuntimeError(f"Failed while processing {name} for {date_str}") from e
 
+    apply_published_metadata_compatibility(
+        all_records, pd.Timestamp(datetime.strptime(date_str, "%Y%m%d"))
+    )
     return len(all_records), all_records
 
 
