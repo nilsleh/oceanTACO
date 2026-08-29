@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import io
+import os
 import time
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import date, datetime
 
 from .access import LocalCacheBackend
@@ -65,6 +67,22 @@ def _filename(token: str) -> str:
     return get_modality(token).filename
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedAsset:
+    """One catalog row reduced to the worker-safe data needed to open it."""
+
+    location: str
+    tile: str
+
+
+def _rows_from_frame(frame, box: GeoBox, filename: str):
+    """Select matching rows from an already-filtered catalog date frame."""
+    tiles = [tile for tile, bounds in _REGION_BOUNDS.items() if _intersects(box, bounds)]
+    return frame[
+        frame["l2:id"].astype(str).str.endswith(filename)
+        & frame["l1:id"].astype(str).isin(tiles)
+    ]
+
 def _rows(catalog, when: str, box: GeoBox, filename: str):
     """Select Core assets by named-region intersection, not bbox argument order.
 
@@ -73,12 +91,7 @@ def _rows(catalog, when: str, box: GeoBox, filename: str):
     resolve that tiny spatial index locally and filter the flattened catalog by
     its explicit ``l1:id`` instead of relying on an ambiguous external API.
     """
-    frame = catalog.filter_datetime(f"{when}/{when}").flatten()
-    tiles = [tile for tile, bounds in _REGION_BOUNDS.items() if _intersects(box, bounds)]
-    return frame[
-        frame["l2:id"].astype(str).str.endswith(filename)
-        & frame["l1:id"].astype(str).isin(tiles)
-    ]
+    return _rows_from_frame(catalog.filter_datetime(f"{when}/{when}").flatten(), box, filename)
 
 
 def _intersects(left: GeoBox, right: GeoBox) -> bool:
@@ -109,11 +122,42 @@ def _url_from_row(row) -> str:
     raise ValueError("Catalog row has no URL/HREF column.")
 
 
+def _is_local_location(value: str) -> bool:
+    """Return whether a catalog location addresses the local filesystem.
+
+    A local ``.taco`` catalog yields plain absolute paths, so the decision is
+    made from the location itself rather than from ``taco_path``: a catalog may
+    legitimately mix local and remote assets, and only the value knows which.
+    """
+    from urllib.parse import urlparse
+
+    if value.startswith("file://"):
+        return True
+    return urlparse(value).scheme in {"", "file"}
+
+
+def _local_path(value: str) -> str:
+    from urllib.parse import unquote, urlparse
+
+    if value.startswith("file://"):
+        return unquote(urlparse(value).path)
+    return value
+
+
 def _download_dataset(row, config: CatalogConfig, cache: LocalCacheBackend | None, when: str, filename: str):
     import requests
     import xarray as xr
 
     url = _url_from_row(row)
+
+    if _is_local_location(url):
+        # A local asset is already immutable on disk.  Routing it through the
+        # fetch cache would copy files into a cache of files, and routing it
+        # through ``requests`` raises MissingSchema on a path with no scheme.
+        path = _local_path(url)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Catalog references a local asset that does not exist: {path}")
+        return xr.open_dataset(path, engine="h5netcdf")
 
     def fetch() -> bytes:
         error: Exception | None = None
@@ -133,6 +177,47 @@ def _download_dataset(row, config: CatalogConfig, cache: LocalCacheBackend | Non
         return cache.open_or_fetch(when, _tile_from_row(row), filename, fetch)
     return xr.open_dataset(io.BytesIO(fetch()), engine="h5netcdf")
 
+
+
+def _download_location(
+    location: str,
+    tile: str,
+    config: CatalogConfig,
+    cache: LocalCacheBackend | None,
+    when: str,
+    filename: str,
+):
+    """Open a resolved local path or HTTP location without a catalog object."""
+    import requests
+    import xarray as xr
+
+    if _is_local_location(location):
+        path = _local_path(location)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Catalog references a local asset that does not exist: {path}")
+        return xr.open_dataset(path, engine="h5netcdf")
+
+    def fetch() -> bytes:
+        error: Exception | None = None
+        for attempt in range(config.retries + 1):
+            try:
+                response = requests.get(
+                    location,
+                    timeout=config.timeout_seconds,
+                    headers={"User-Agent": "ocean-taco/0.1"},
+                )
+                response.raise_for_status()
+                return response.content
+            except requests.RequestException as exc:
+                error = exc
+                if attempt < config.retries:
+                    time.sleep(min(0.25 * (2**attempt), 2.0))
+        assert error is not None
+        raise error
+
+    if cache is not None:
+        return cache.open_or_fetch(when, tile, filename, fetch)
+    return xr.open_dataset(io.BytesIO(fetch()), engine="h5netcdf")
 
 def load_tile_nc(
     catalog,
@@ -404,6 +489,126 @@ def load_multisource_time_series_nc(
             # Source timestamps, rather than catalog row/date order, determine
             # the returned temporal axis.  Per-date spatial merging has already
             # completed inside load_bbox_nc.
+            result[token] = xr.concat(
+                available,
+                dim="time",
+                data_vars="all",
+                coords="minimal",
+                compat="no_conflicts",
+                combine_attrs="override",
+            ).sortby("time")
+    return result
+
+AssetPlan = dict[tuple[str, str, GeoBox], tuple[ResolvedAsset, ...]]
+
+
+def plan_multisource_assets(
+    catalog,
+    requests: Iterable[tuple[str, GeoBox, TimeRange]],
+) -> AssetPlan:
+    """Resolve logical source requests to serialisable assets in the parent.
+
+    The catalog is queried once per distinct ``(token, day)``.  Individual
+    patches then filter that in-memory date frame by their named Core regions.
+    The returned plan contains only strings and immutable geographic boxes, so
+    it can cross a PyTorch process boundary without carrying DuckDB, obstore,
+    or tacoreader state.
+    """
+    entries = {
+        (token, _date_string(day), box)
+        for token, box, interval in requests
+        for day in _days(interval)
+    }
+    grouped: dict[tuple[str, str], list[GeoBox]] = {}
+    for token, when, box in entries:
+        grouped.setdefault((token, when), []).append(box)
+
+    plan: AssetPlan = {}
+    for (token, when), boxes in grouped.items():
+        frame = catalog.filter_datetime(f"{when}/{when}").flatten()
+        filename = _filename(token)
+        for box in boxes:
+            assets: list[ResolvedAsset] = []
+            seen_locations: set[str] = set()
+            for segment in box.segments():
+                rows = _rows_from_frame(frame, segment, filename)
+                for _, row in rows.iterrows():
+                    location = _url_from_row(row)
+                    if location in seen_locations:
+                        continue
+                    seen_locations.add(location)
+                    assets.append(ResolvedAsset(location, _tile_from_row(row)))
+            plan[(token, when, box)] = tuple(assets)
+    return plan
+
+
+def _load_planned_bbox_nc(
+    assets: Iterable[ResolvedAsset],
+    when: str,
+    box: GeoBox,
+    token: str,
+    *,
+    config: CatalogConfig,
+    backend: LocalCacheBackend | None,
+):
+    """Fetch and render-ready merge of catalog-free planned asset locations."""
+    filename = _filename(token)
+    datasets = [
+        _download_location(asset.location, asset.tile, config, backend, when, filename)
+        for asset in assets
+    ]
+    if not datasets:
+        return None
+    if token == "l3_swot":
+        datasets = [_clean_swot(dataset) for dataset in datasets]
+    if get_modality(token).is_points:
+        return _merge_points([_crop_points(dataset, box) for dataset in datasets])
+    merged = _merge_grid_tiles(
+        datasets, coordinate_tolerance=get_modality(token).regularity_tolerance
+    )
+    return _crop(merged, box)
+
+
+def load_planned_multisource_time_series_nc(
+    plan: AssetPlan,
+    tokens: Iterable[str],
+    box: GeoBox,
+    time: TimeRange,
+    *,
+    config: CatalogConfig,
+    backend: LocalCacheBackend | None = None,
+) -> dict[str, object | None]:
+    """Fetch a planned request without consulting a catalog in this process."""
+    import xarray as xr
+
+    result: dict[str, object | None] = {}
+    for token in tokens:
+        per_day = [
+            _load_planned_bbox_nc(
+                plan.get((token, _date_string(day), box), ()),
+                _date_string(day),
+                box,
+                token,
+                config=config,
+                backend=backend,
+            )
+            for day in _days(time)
+        ]
+        if get_modality(token).is_points:
+            result[token] = _merge_points(
+                [dataset for dataset in per_day if dataset is not None]
+            )
+            continue
+        available = [
+            selected
+            for dataset in per_day
+            if dataset is not None
+            for selected in (_select_time_range(dataset, time),)
+            if selected.sizes.get("time", 0) > 0
+        ]
+        if not available:
+            result[token] = None
+        else:
             result[token] = xr.concat(
                 available,
                 dim="time",

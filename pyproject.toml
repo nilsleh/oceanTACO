@@ -65,6 +65,9 @@ tutorials = [
 Repository = "https://github.com/nilsleh/oceanTACO"
 Issues = "https://github.com/nilsleh/oceanTACO/issues"
 
+[tool.setuptools]
+include-package-data = false
+
 [tool.setuptools.packages.find]
 # Search from repo root (.) and include the ocean_taco package
 where = ["."]
@@ -86,6 +89,7 @@ addopts = "-m 'not slow'"
 filterwarnings = []
 markers = [
     "slow: marks tests as slow (requires network access; deselected by default)",
+    "local: marks tests that require the guarded local OceanTACO port (skipped when absent)",
 ]
 
 [tool.env]

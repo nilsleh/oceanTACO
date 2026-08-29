@@ -80,6 +80,7 @@ class OceanTACODataset(Dataset):
         ocean_mask=None,
         draw: QueryDraw | None = None,
         experiment_record: Mapping[str, Any] | Path | str | None = None,
+        plan_sources: bool = True,
     ) -> None:
         if not sources:
             raise ValueError("sources cannot be empty.")
@@ -140,6 +141,25 @@ class OceanTACODataset(Dataset):
         self.source_loader = source_loader
         self.patch = patch
         self.ocean_mask = ocean_mask or load_released_ocean_mask()
+        if plan_sources and isinstance(self.source_loader, CoreSourceLoader):
+            self.source_loader = self.source_loader.plan(self._planning_requests())
+
+    def _planning_requests(self) -> tuple[tuple[str, PatchSpec], ...]:
+        """Return the unique logical source requests resolved before workers start."""
+        tokens = {
+            component
+            for request in self.source_requests
+            for component in (
+                request.renderer.components
+                if isinstance(request.renderer, VectorPair)
+                else (request.token,)
+            )
+        }
+        specs = {
+            row if isinstance(row, PatchSpec) else _patch_from_row(row)
+            for row in self.rows
+        }
+        return tuple((token, spec) for token in sorted(tokens) for spec in specs)
 
     def __len__(self) -> int:
         """Number of immutable logical sample rows."""
@@ -178,6 +198,21 @@ class OceanTACODataset(Dataset):
             )
         return spec
 
+    @staticmethod
+    def _context_window(dense, spec: PatchSpec):
+        """Limit a canonical dense source to the patch's UTC context window."""
+        start = spec.context.start.replace(tzinfo=None)
+        end = spec.context.end.replace(tzinfo=None)
+        return dense.sel(time=slice(start, end))
+
+    @staticmethod
+    def _unavailable(
+        output: dict[str, Any], availability: dict[str, bool], request: _SourceRequest
+    ) -> None:
+        """Record the one canonical representation for an unavailable source."""
+        availability[request.token] = False
+        output[request.token] = request.renderer.empty()
+
     def __getitem__(self, index: int) -> dict[str, Any]:
         """Render one logical patch into a flat dict keyed by source token."""
         row = self.rows[index]
@@ -188,76 +223,61 @@ class OceanTACODataset(Dataset):
             if isinstance(request.renderer, VectorPair):
                 raw_pair = self._load_pair(request.renderer.components, spec)
                 if raw_pair is None:
-                    availability[request.token] = False
-                    output[request.token] = request.renderer.empty()
+                    self._unavailable(output, availability, request)
                     continue
-                first_token, second_token = request.renderer.components
-                first = canonicalise_dense(
-                    raw_pair[first_token],
-                    get_modality(first_token),
-                    fallback_time=spec.anchor_time,
-                )
-                second = canonicalise_dense(
-                    raw_pair[second_token],
-                    get_modality(second_token),
-                    fallback_time=spec.anchor_time,
-                )
-                start, end = (
-                    spec.context.start.replace(tzinfo=None),
-                    spec.context.end.replace(tzinfo=None),
-                )
-                first, second = (
-                    first.sel(time=slice(start, end)),
-                    second.sel(time=slice(start, end)),
-                )
-                if first.sizes["time"] == 0 or second.sizes["time"] == 0:
-                    availability[request.token] = False
-                    output[request.token] = request.renderer.empty()
+                components = request.renderer.components
+                raw_values = tuple(raw_pair[token] for token in components)
+                sources = tuple(get_modality(token) for token in components)
+            else:
+                raw = self._load(request.token, spec)
+                if raw is None:
+                    self._unavailable(output, availability, request)
                     continue
-                rendered = request.renderer.render(
-                    first,
-                    second,
-                    spec.footprint,
-                    ocean_mask=self.ocean_mask,
-                    token=request.token,
-                )
-                availability[request.token] = bool(rendered["pair_available"])
-                output[request.token] = rendered
-                continue
-            raw = self._load(request.token, spec)
-            if raw is None:
-                availability[request.token] = False
-                output[request.token] = request.renderer.empty()
-                continue
-            source = get_modality(request.token)
+                raw_values = (raw,)
+                sources = (get_modality(request.token),)
             if isinstance(request.renderer, Points):
+                source = sources[0]
                 if request.renderer.variable not in source.available_variables:
                     raise ValueError(
                         f"{request.renderer.variable!r} is not an exposed variable for {request.token!r}."
                     )
                 rendered = request.renderer.render(
-                    raw, spec.footprint, time=spec.context, ocean_mask=self.ocean_mask
+                    raw_values[0],
+                    spec.footprint,
+                    time=spec.context,
+                    ocean_mask=self.ocean_mask,
                 )
             else:
-                dense = canonicalise_dense(raw, source, fallback_time=spec.anchor_time)
-                dense = dense.sel(
-                    time=slice(
-                        spec.context.start.replace(tzinfo=None),
-                        spec.context.end.replace(tzinfo=None),
+                dense_values = tuple(
+                    self._context_window(
+                        canonicalise_dense(raw_value, source, fallback_time=spec.anchor_time),
+                        spec,
                     )
+                    for raw_value, source in zip(raw_values, sources, strict=True)
                 )
-                if dense.sizes["time"] == 0:
-                    availability[request.token] = False
-                    output[request.token] = request.renderer.empty()
+                if any(dense.sizes["time"] == 0 for dense in dense_values):
+                    self._unavailable(output, availability, request)
                     continue
-                rendered = request.renderer.render(
-                    dense,
-                    spec.footprint,
-                    ocean_mask=self.ocean_mask,
-                    token=request.token,
-                    source=source,
-                )
-            availability[request.token] = bool(np.asarray(rendered["valid_mask"]).any())
+                if isinstance(request.renderer, VectorPair):
+                    rendered = request.renderer.render(
+                        *dense_values,
+                        spec.footprint,
+                        ocean_mask=self.ocean_mask,
+                        token=request.token,
+                    )
+                else:
+                    rendered = request.renderer.render(
+                        dense_values[0],
+                        spec.footprint,
+                        ocean_mask=self.ocean_mask,
+                        token=request.token,
+                        source=sources[0],
+                    )
+            availability[request.token] = (
+                bool(rendered["pair_available"])
+                if isinstance(request.renderer, VectorPair)
+                else bool(np.asarray(rendered["valid_mask"]).any())
+            )
             output[request.token] = rendered
         output["query"] = spec
         output["availability"] = availability

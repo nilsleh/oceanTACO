@@ -145,33 +145,25 @@ Important interpretation caveats:
 
 OceanTACO is hosted on HuggingFace and can be accessed without downloading the full dataset.
 
-### Stream via `tacoreader`
+### Catalog retrieval
 
 ```python
-from ocean_taco.dataset.retrieve import HF_DEFAULT_URL, load_hf_dataset, load_tile_nc
+from ocean_taco import CatalogConfig, GeoBox
+from ocean_taco.retrieve import load_bbox_nc, load_hf_dataset, load_tile_nc
 
-dataset_hf = load_hf_dataset(HF_DEFAULT_URL) # TACO df
+config = CatalogConfig(cache_dir=".oceantaco-cache")
+catalog = load_hf_dataset(config)
 
-# Load one named-region tile
-ds = load_tile_nc(
-    dataset_hf,
-    date="2024-06-01",
-    tile="NORTH_ATLANTIC",
-    data_source="l4_sst",
-    cache_dir="./cache",   # optional local cache
-)
-```
+# Load one named-region tile.
+tile = load_tile_nc(catalog, "2024-06-01", "NORTH_ATLANTIC", "l4_sst", config=config)
 
-### Load all tiles covering a bounding box
-
-```python
-from ocean_taco.dataset.retrieve import load_bbox_nc
-
+# Or merge every tile intersecting a named geographic box.
 ds = load_bbox_nc(
-    dataset_hf,
-    date="2024-06-01",
-    bbox=(-80, -30, 25, 50),  # (lon_min, lon_max, lat_min, lat_max)
-    data_source="l4_sst",
+    catalog,
+    "2024-06-01",
+    GeoBox(-80.0, -30.0, 25.0, 50.0),
+    "l4_sst",
+    config=config,
 )
 ```
 

@@ -1,131 +1,71 @@
 # Getting Started
 
-OceanTACO supports two complementary access patterns:
+OceanTACO has two complementary workflows:
 
-- direct retrieval with `xarray` data loading for inspection and analysis
-- query-based sampling with `OceanTACODataset` for ML training/evaluation
+- direct native-coordinate retrieval for inspection and analysis;
+- reproducible `QuerySet` draws rendered as PyTorch batches for ML.
 
-`OceanTACODataset` works with both local data and remote HuggingFace URLs, so the key decision is workflow style (analysis vs ML), not local vs remote. Note that currently, due to storage limits streaming only works for the Core dataset.
-
-## Prerequisites
-
-- Python 3.11+
-- Conda or pip
+Python 3.12 or newer is required.
 
 ## Installation
 
-Most users should install directly from PyPI:
-
 ```sh
-# Core package
 pip install ocean-taco
-
-# With HuggingFace helpers
-pip install "ocean-taco[hf]"
 ```
 
-If you want the latest development version from GitHub:
+For a development checkout, install the test extras with `pip install -e
+".[tests]"`.
 
-```sh
-pip install "ocean_taco[hf] @ git+https://github.com/nilsleh/oceanTACO.git@main"
-```
-
-If you have cloned this repository and want a local editable install, run the following from the repository root:
-
-```sh
-# Dataset loading + queries + visualization (default)
-pip install -e .
-
-# Add HuggingFace client helpers for streaming/downloading
-pip install -e ".[hf]"
-
-# Add data-generation pipeline dependencies
-pip install -e ".[generate]"
-
-# Full development profile
-pip install -e ".[generate,hf,tests]"
-```
-
-## Choose the Right Workflow
-
-Use this quick rule:
-
-- use direct retrieval when you want to inspect one date/region/source as an `xarray.Dataset`
-- use `OceanTACODataset` when you need repeated sampling over many queries and batches
-
-| Goal | Recommended API | Typical output |
-|---|---|---|
-| Inspect and visualize a few subsets | `ocean_taco.dataset.retrieve` helpers | `xr.Dataset` |
-| Build training/eval samples with query generation | `OceanTACODataset` + `QueryGenerator` | PyTorch-ready sample dicts |
-| Use local files only | either API | same as above |
-| Stream from HuggingFace | either API | same as above |
-
-## Quick Start: Retrieval (Direct `xarray` Access)
-
-Use this for cloud-native subsetting, and plotting workflows.
+## Retrieve one native-coordinate subset
 
 ```python
-from ocean_taco.dataset.retrieve import HF_DEFAULT_URL, load_hf_dataset, load_bbox_nc
+from ocean_taco import CatalogConfig, GeoBox
+from ocean_taco.retrieve import load_bbox_nc, load_hf_dataset
 
-dataset_hf = load_hf_dataset(HF_DEFAULT_URL)
-
-# Retrieve tiles overlapping a bbox for one date and one data source.
-ds = load_bbox_nc(
-    dataset_hf,
-    date="2024-06-01",
-    bbox=(-80, -30, 25, 50),   # (lon_min, lon_max, lat_min, lat_max)
-    data_source="l4_sst",
-    cache_dir="./cache",       # optional local cache
+config = CatalogConfig(cache_dir=".oceantaco-cache")
+catalog = load_hf_dataset(config)
+sst = load_bbox_nc(
+    catalog,
+    "2024-06-01",
+    GeoBox(-80.0, -30.0, 25.0, 50.0),
+    "l4_sst",
+    config=config,
 )
 ```
 
-For more retrieval patterns (single tile, full snapshot, stream records), see {doc}`dataset-workflows`.
+Pass `CatalogConfig(taco_path="/path/to/OceanTACO", cache_dir=".oceantaco-cache")`
+for a local catalog. The location must be the `OceanTACO` directory itself.
 
-## Quick Start: ML Loader (`OceanTACODataset`)
-
-Use this when you need consistent query sampling for model training/evaluation.
-
-`taco_path` can be either:
-
-- a local OceanTACO dataset path
-- a remote dataset URL such as `HF_DEFAULT_URL`
+## Build reproducible ML samples
 
 ```python
 from torch.utils.data import DataLoader
-from ocean_taco.dataset import OceanTACODataset, collate_ocean_samples
-from ocean_taco.dataset.queries import QueryGenerator, PatchSize
-from ocean_taco.dataset.retrieve import HF_DEFAULT_URL
 
+from ocean_taco import CatalogConfig, QuerySet, draw_queryset
+from ocean_taco.render import Resample
+from ocean_taco.torch import OceanTACODataset, collate_ocean_samples, seed_ocean_taco_worker
+
+queryset = QuerySet.read("release/querysets/pilot10")
+draw = draw_queryset(queryset, requested_row_count=64, seed=7, record_path="run.json")
 dataset = OceanTACODataset(
-    taco_path=HF_DEFAULT_URL,  # or "/path/to/OceanTACO"
-    input_variables=["l4_ssh", "l4_sst", "glorys_sss"],
-    target_variables=["l3_swot"],
-    temporal_agg="mean",
+    queries=draw,
+    sources={"l4_sst": Resample((64, 64), support_threshold=0.5)},
+    catalog_config=CatalogConfig(cache_dir=".oceantaco-cache"),
 )
-
-generator = QueryGenerator(land_mask_path=".ocean_mask_cache/land_mask.npy")
-queries = generator.generate_training_queries(
-    n_queries=1000,
-    patch_size=PatchSize(2.0, "deg"),
-    date_range=("2024-01-01", "2024-03-31"),
-)
-
 loader = DataLoader(
     dataset,
-    sampler=queries,
-    batch_size=16,
+    batch_size=8,
+    num_workers=2,
+    persistent_workers=True,
+    worker_init_fn=seed_ocean_taco_worker,
     collate_fn=collate_ocean_samples,
-    num_workers=4,
 )
 ```
 
-For detailed ML guidance (query design, batching, patch sizing, training vs eval), see {doc}`dataset-ml-loader`.
+The dataset resolves the catalog before worker processes start; workers read
+only resolved assets. Start with `num_workers=0` in notebooks, then benchmark
+steady-state training with a small persistent worker pool.
 
-## Next Steps
-
-- See the {doc}`dataset_description` for a full list of variables and ocean regions.
-- See {doc}`dataset-workflows` for retrieval and streaming workflows.
-- See {doc}`dataset-ml-loader` for end-to-end ML loader workflows.
-- See the {doc}`dataset_generation` page for the full raw-data -> formatted -> TACO build pipeline.
-- Walk through the {doc}`tutorials/index` for end-to-end examples.
-- Consult the {doc}`api/index` for the full public API reference.
+See {doc}`dataset-workflows` for retrieval details and
+{doc}`dataset-ml-loader` for QuerySet selection, replay, and multimodal
+batches.

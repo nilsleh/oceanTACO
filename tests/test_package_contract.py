@@ -701,3 +701,85 @@ def test_eval_grid_footprints_tile_open_ocean_without_gaps():
 def test_latitude_band_counts_reject_uncovered_positions():
     with pytest.raises(AssertionError, match="latitude bands"):
         latitude_band_counts(({"centre_lat": 0.0}, {"centre_lat": 65.0}))
+
+
+def _dense_asset(units):
+    values = np.arange(6, dtype=np.float32).reshape(1, 2, 3)
+    attrs = {} if units is None else {"units": units}
+    return xr.Dataset(
+        {"analysed_sst": (("time", "lat", "lon"), values, attrs)},
+        coords={
+            "time": np.array(["2023-03-29T12:00:00"], dtype="datetime64[ns]"),
+            "lat": np.array([10.0, 11.0]),
+            "lon": np.array([-30.0, -29.0, -28.0]),
+        },
+    )
+
+
+@pytest.mark.parametrize("units", [None, "", "degC", "degree_Celsius", "furlongs"])
+def test_canonicalise_dense_does_not_gate_on_source_units(units):
+    """Units are an asset property, validated at ingest, never in the sample path.
+
+    A released asset that declares no units - or an unrecognised one - must not
+    fail a training run: no registered source needs a value conversion and the
+    rendered sample carries arrays, not attrs.  Regression for l3_swot/l3_ssh,
+    which ship with no units attribute at all.
+    """
+    from ocean_taco.registry import get_modality
+
+    rendered = canonicalise_dense(_dense_asset(units), get_modality("l4_sst"))
+    assert rendered.shape == (1, 2, 3)
+    # Values pass through untouched; only the label is normalised.
+    assert np.array_equal(np.asarray(rendered.values), np.arange(6, dtype=np.float32).reshape(1, 2, 3))
+    assert rendered.attrs["units"] == "degC"
+
+
+def test_every_registered_dense_source_renders_without_units_metadata():
+    """No registered dense token may depend on a source units attribute."""
+    from ocean_taco.registry import MODALITY_REGISTRY
+
+    for token, spec in sorted(MODALITY_REGISTRY.items()):
+        if spec.geometry != "dense_grid":
+            continue
+        asset = _dense_asset(None).rename({"analysed_sst": spec.primary_variable})
+        rendered = canonicalise_dense(asset, spec)
+        assert rendered.attrs["units"] == spec.canonical_unit, token
+
+
+def test_local_catalog_locations_bypass_http_retrieval(tmp_path):
+    """A local .taco catalog yields filesystem paths, which must not reach requests.
+
+    Regression: ``_download_dataset`` sent every location to ``requests.get``,
+    so ``CatalogConfig(taco_path=...)`` raised MissingSchema on tile loading.
+    """
+    from ocean_taco.retrieve import _is_local_location, _local_path
+
+    assert _is_local_location("/data/OceanTACO/DATA/2023_03_29/NORTH_ATLANTIC/argo.nc")
+    assert _is_local_location("file:///data/argo.nc")
+    assert not _is_local_location("https://huggingface.co/datasets/x/argo.nc")
+    assert _local_path("file:///data/argo.nc") == "/data/argo.nc"
+    assert _local_path("/data/argo.nc") == "/data/argo.nc"
+
+
+def test_local_asset_round_trips_without_network(tmp_path):
+    """A local catalog location opens directly from disk."""
+    import pandas as pd
+
+    from ocean_taco.retrieve import _download_dataset
+
+    path = tmp_path / "l4_sst.nc"
+    _dense_asset("degC").to_netcdf(path, engine="h5netcdf")
+    row = pd.Series({"gdal_vsi": str(path)})
+    opened = _download_dataset(row, CatalogConfig(), None, "2023-03-29", "l4_sst.nc")
+    assert "analysed_sst" in opened
+
+
+def test_missing_local_asset_reports_the_path_not_a_url_error(tmp_path):
+    """A local catalog pointing at an absent file must say so plainly."""
+    import pandas as pd
+
+    from ocean_taco.retrieve import _download_dataset
+
+    row = pd.Series({"gdal_vsi": str(tmp_path / "absent.nc")})
+    with pytest.raises(FileNotFoundError, match="local asset that does not exist"):
+        _download_dataset(row, CatalogConfig(), None, "2023-03-29", "l4_sst.nc")

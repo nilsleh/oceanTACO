@@ -11,22 +11,6 @@ from ..geobox import GeoBox, utc_isoformat
 from ..registry import ModalitySpec
 
 
-def _normalise_unit(value: str) -> str:
-    return value.strip().replace("°", "deg").replace("_", " ").lower()
-
-
-def _convert_values(values: np.ndarray, source_unit: str, spec: ModalitySpec) -> np.ndarray:
-    """Convert only documented source-unit differences to the canonical unit."""
-    canonical = _normalise_unit(spec.canonical_unit)
-    supplied = _normalise_unit(source_unit)
-    accepted = {_normalise_unit(unit) for unit in spec.accepted_units}
-    if supplied in accepted or supplied == canonical:
-        return values
-    if canonical in {"degc", "degree celsius"} and supplied in {"k", "kelvin", "degrees kelvin"}:
-        return values - 273.15
-    raise ValueError(f"{spec.token} declares unsupported decoded units {source_unit!r}; expected {spec.canonical_unit!r}.")
-
-
 def canonicalise_dense(dataset, spec: ModalitySpec, *, fallback_time: datetime | None = None):
     """Return a decoded dense source as sorted ``(time, lat, lon)`` xarray data.
 
@@ -65,12 +49,14 @@ def canonicalise_dense(dataset, spec: ModalitySpec, *, fallback_time: datetime |
     data = data.assign_coords(lon=canonical_lon).sortby("lon")
     if np.unique(np.asarray(data["lon"].values)).size != data.sizes["lon"]:
         raise ValueError(f"{spec.token} contains duplicate longitudes at the antimeridian.")
-    units = data.attrs.get("units")
-    if not units:
-        raise ValueError(f"{spec.token} decoded values have no units metadata.")
-    converted = _convert_values(np.asarray(data.values), str(units), spec)
+    # Source units are an asset-level property, validated once where assets are
+    # ingested (``scripts/release/queryset_build.check_units``).  Re-checking
+    # here would gate every ``__getitem__`` on metadata this path never reads:
+    # no registered source requires a value conversion, and the rendered sample
+    # carries arrays, not attrs.  A released asset that legitimately declares no
+    # units therefore must not fail a training run.
     return xr.DataArray(
-        converted,
+        np.asarray(data.values),
         dims=("time", "lat", "lon"),
         coords={"time": data["time"], "lat": data["lat"], "lon": data["lon"]},
         name=spec.primary_variable,

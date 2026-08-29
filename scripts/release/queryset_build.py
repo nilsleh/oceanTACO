@@ -32,7 +32,6 @@ import numpy as np
 
 from ocean_taco.geobox import GeoBox, PatchSize
 from ocean_taco.registry import ModalitySpec, get_modality
-from ocean_taco.render.native import _normalise_unit
 from ocean_taco.retrieve import _REGION_BOUNDS, _intersects
 from ocean_taco.sampling.coverage import DenseCoverage, unavailable_dense_coverage
 from ocean_taco.sampling.ocean_mask import OceanMaskArtifact
@@ -51,6 +50,15 @@ def canonical_lon(values: np.ndarray) -> np.ndarray:
     """Map longitudes onto ``[-180, 180)`` exactly as the released code does."""
     values = np.asarray(values, dtype=np.float64)
     return np.where(values == 180.0, -180.0, ((values + 180.0) % 360.0) - 180.0)
+
+
+def _normalise_unit(value: str) -> str:
+    """Fold documented spelling differences before comparing a source unit.
+
+    Ingest owns this: the loader deliberately does not inspect source units,
+    so the rule lives with the check that still enforces it.
+    """
+    return value.strip().replace("\u00b0", "deg").replace("_", " ").lower()
 
 
 def check_units(spec: ModalitySpec, units: object) -> str:

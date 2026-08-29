@@ -60,7 +60,7 @@ def test_release_evidence_template_is_an_intentional_release_stop():
 
     errors = validate(template, root=ROOT)
     assert any("reference_recipe is not complete" in error for error in errors)
-    assert any("ocean_taco.dataset still exists" in error for error in errors)
+    assert not any("ocean_taco.dataset still exists" in error for error in errors)
 
 
 @pytest.mark.parametrize(
@@ -80,6 +80,11 @@ def test_release_evidence_template_is_an_intentional_release_stop():
 )
 def test_independent_release_checks_reject_known_bad_queryset(command):
     """Checks 2--6 must retain power against the archived broken artifact."""
+    # Without this the assertion is vacuous: on a clean clone the artifact is
+    # absent, the check exits non-zero because it cannot open anything, and the
+    # test passes while proving nothing about discriminating power.
+    if not BAD.is_dir():
+        pytest.skip(f"known-bad regression fixture is not present at {BAD}")
     result = subprocess.run(
         [sys.executable, *command, "--root", str(BAD)],
         cwd=ROOT,
