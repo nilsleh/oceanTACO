@@ -348,6 +348,8 @@ def _stack_fixed_grid(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
     if support:
         result["support"] = torch.stack(support)
+    if any("native_shape" in record for record in records):
+        result["native_shapes"] = [record.get("native_shape") for record in records]
     if any("ocean_mask" in record for record in records):
         result["ocean_mask"] = torch.stack(
             [
@@ -438,6 +440,8 @@ def _stack_vector_pair(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
     if support:
         result["support"] = torch.stack(support)
+    if any("native_shape" in record for record in records):
+        result["native_shapes"] = [record.get("native_shape") for record in records]
     for key in ("ocean_mask", "in_mask_domain"):
         if any(key in record for record in records):
             result[key] = torch.stack(
@@ -579,8 +583,8 @@ def _pad_points(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                 domain[: record["in_mask_domain"].shape[0]] = record["in_mask_domain"]
             domains.append(domain)
         result["in_mask_domain"] = torch.stack(domains)
-    if "direction" in records[0]:
-        result["direction"] = [record["direction"] for record in records]
+    if any("direction" in record for record in records):
+        result["direction"] = [record.get("direction") for record in records]
     return result
 
 

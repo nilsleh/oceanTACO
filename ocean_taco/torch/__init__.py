@@ -7,7 +7,7 @@ from torch.utils.data import get_worker_info
 
 from .dataset import OceanTACODataset, collate_ocean_samples, native_pad_collate
 from .loader import CoreSourceLoader
-from .sampler import ShapeBucketSampler
+from .sampler import ShapeBucketSampler, native_shapes
 
 
 def seed_ocean_taco_worker(worker_id: int) -> None:
@@ -30,5 +30,6 @@ __all__ = [
     "ShapeBucketSampler",
     "collate_ocean_samples",
     "native_pad_collate",
+    "native_shapes",
     "seed_ocean_taco_worker",
 ]

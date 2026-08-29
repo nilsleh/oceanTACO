@@ -59,7 +59,7 @@ from ocean_taco.catalog import CatalogConfig, load_catalog  # noqa: E402
 from ocean_taco.geobox import PatchSize, utc_isoformat  # noqa: E402
 from ocean_taco.manifest import QuerySet, content_sha256  # noqa: E402
 from ocean_taco.registry import get_modality, registry_sha256  # noqa: E402
-from ocean_taco.retrieve import _clean_swot, _url_from_row  # noqa: E402
+from ocean_taco.retrieve import REGION_BIT, REGIONS, _clean_swot, _url_from_row  # noqa: E402
 from ocean_taco.sampling.coverage import unavailable_dense_coverage  # noqa: E402
 from ocean_taco.sampling.grids import (  # noqa: E402
     build_position_grid,
@@ -70,10 +70,6 @@ from ocean_taco.sampling.publish import GRID_SPACING_RATIO, build_queryset  # no
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUILD_TOKENS: tuple[str, ...] = ("argo", "l3_ssh", "l3_swot")
-
-#: Region ordering used for the ``region_mask`` bitmask on position rows.
-REGION_BIT = {region: 1 << index for index, region in enumerate(REGIONS)}
-
 
 # --------------------------------------------------------------------------
 # provenance

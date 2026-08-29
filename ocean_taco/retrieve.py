@@ -16,12 +16,14 @@ from .registry import get_modality
 from .temporal import _cluster_axis, _cluster_indices
 
 __all__ = [
+    "REGIONS",
+    "REGION_BIT",
     "CatalogConfig",
-    "load_hf_dataset",
-    "load_tile_nc",
     "load_bbox_nc",
     "load_bbox_swot_nc",
+    "load_hf_dataset",
     "load_multisource_time_series_nc",
+    "load_tile_nc",
 ]
 
 
@@ -34,6 +36,12 @@ _REGION_BOUNDS: dict[str, GeoBox] = {
     "NORTH_ATLANTIC": GeoBox(-90, 0, 0, 90),
     "NORTH_INDIAN": GeoBox(0, 90, 0, 90),
     "NORTH_PACIFIC_EAST": GeoBox(90, 180, 0, 90),
+}
+
+# Public region-mask allocation for QueryFilter(region_mask_any=...).
+REGIONS: tuple[str, ...] = tuple(sorted(_REGION_BOUNDS))
+REGION_BIT: dict[str, int] = {
+    region: 1 << index for index, region in enumerate(REGIONS)
 }
 
 # One cache backend must outlive an individual retrieval call for its LRU to
@@ -78,9 +86,11 @@ class ResolvedAsset:
 def _rows_from_frame(frame, box: GeoBox, filename: str):
     """Select matching rows from an already-filtered catalog date frame."""
     tiles = [tile for tile, bounds in _REGION_BOUNDS.items() if _intersects(box, bounds)]
+    l2_ids = frame.get("_oceantaco_l2_id", frame["l2:id"].astype(str))
+    l1_ids = frame.get("_oceantaco_l1_id", frame["l1:id"].astype(str))
     return frame[
-        frame["l2:id"].astype(str).str.endswith(filename)
-        & frame["l1:id"].astype(str).isin(tiles)
+        l2_ids.str.endswith(filename)
+        & l1_ids.isin(tiles)
     ]
 
 def _rows(catalog, when: str, box: GeoBox, filename: str):
@@ -525,7 +535,10 @@ def plan_multisource_assets(
 
     plan: AssetPlan = {}
     for (token, when), boxes in grouped.items():
-        frame = catalog.filter_datetime(f"{when}/{when}").flatten()
+        frame = catalog.filter_datetime(f"{when}/{when}").flatten().assign(
+            _oceantaco_l2_id=lambda value: value["l2:id"].astype(str),
+            _oceantaco_l1_id=lambda value: value["l1:id"].astype(str),
+        )
         filename = _filename(token)
         for box in boxes:
             assets: list[ResolvedAsset] = []

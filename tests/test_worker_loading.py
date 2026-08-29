@@ -22,9 +22,11 @@ from ocean_taco.torch import OceanTACODataset, seed_ocean_taco_worker
 from ocean_taco.torch import loader as loader_module
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCAL_PORT = (
-    ROOT
-    / "results/generation_audit_20260828/port_20230329_verified/taco/OceanTACO"
+LOCAL_PORT = Path(
+    os.environ.get(
+        "OCEANTACO_LOCAL_PORT",
+        ROOT / "results/generation_audit_20260828/port_20230329_verified/taco/OceanTACO",
+    )
 )
 
 

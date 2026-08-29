@@ -86,11 +86,13 @@ exclude = [
 ocean_taco = ["py.typed", "sampling/data/*.npz"]
 
 [tool.pytest.ini_options]
-addopts = "-m 'not slow'"
+addopts = "-m 'not slow and not remote'"
 filterwarnings = []
 markers = [
     "slow: marks tests as slow (requires network access; deselected by default)",
     "local: marks tests that require the guarded local OceanTACO port (skipped when absent)",
+    "remote: marks tests that exercise the HuggingFace remote path (deselected by default)",
+    "workers: marks high-value worker-boundary regression tests",
 ]
 
 [tool.env]

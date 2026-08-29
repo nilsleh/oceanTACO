@@ -26,7 +26,7 @@ jobs:
       - name: Install package and test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[tests]"
+          python -m pip install -e ".[tests,viz]"
 
       # Scoped to the shipped package and tests: generate_dataset/ and the
       # dev scripts carry ~650 pre-existing findings, and gating this PR check
@@ -45,3 +45,21 @@ jobs:
       - name: Run offline test suite
         # The default addopts deselect `slow`, so this stays network-free.
         run: pytest tests -q
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build documentation with warnings as errors
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[docs,viz]"
+          sphinx-build -W -b html docs docs/_build/html

@@ -2,28 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-from ocean_taco import CatalogConfig, GeoBox, PatchSize, PatchSpec
+from ocean_taco import GeoBox, PatchSize, PatchSpec
 from ocean_taco.render import Resample
 from ocean_taco.retrieve import load_bbox_nc, load_hf_dataset
 from ocean_taco.torch import CoreSourceLoader, OceanTACODataset
-
-ROOT = Path(__file__).resolve().parents[1]
-LOCAL_PORT = (
-    ROOT
-    / "results/generation_audit_20260828/port_20230329_verified/taco/OceanTACO"
-)
-
-
-@pytest.fixture
-def local_config(tmp_path) -> CatalogConfig:
-    if not LOCAL_PORT.is_dir():
-        pytest.skip("local verified OceanTACO port is not available")
-    return CatalogConfig(taco_path=LOCAL_PORT, cache_dir=tmp_path / "cache")
 
 
 @pytest.fixture

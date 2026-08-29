@@ -45,7 +45,7 @@ from ocean_taco import CatalogConfig, QuerySet, draw_queryset
 from ocean_taco.render import Resample
 from ocean_taco.torch import OceanTACODataset, collate_ocean_samples, seed_ocean_taco_worker
 
-queryset = QuerySet.read("release/querysets/pilot10")
+queryset = QuerySet.read("release/querysets/pilot10/512-eval")
 draw = draw_queryset(queryset, requested_row_count=64, seed=7, record_path="run.json")
 dataset = OceanTACODataset(
     queries=draw,
