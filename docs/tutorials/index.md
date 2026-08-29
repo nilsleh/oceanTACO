@@ -1,32 +1,19 @@
 # Tutorials
 
-The tutorials below demonstrate end-to-end workflows with OceanTACO.
-They are rendered from Jupyter notebooks — all outputs are pre-computed so you can read them without running anything.
-
-When you open any tutorial notebook page, use the top-right action buttons to run or download it quickly:
-
-- `Open in Colab`: launches the notebook directly in Google Colab.
-- `Launch on Binder`: starts a temporary cloud Jupyter environment (can take 1-2 minutes to start).
-- `Download`: download the `.ipynb` notebook source file.
-- `Edit this page`: jump to GitHub to suggest edits.
-
-To run the notebooks yourself:
-
-```sh
-conda activate testpy311
-pip install "ocean_taco[hf] @ git+https://github.com/nilsleh/oceanTACO.git@main"
-jupyter lab notebooks/
-```
-
----
+The first three notebooks below use the shipped QuerySet, retrieval, and PyTorch
+APIs. They expect a published QuerySet and Core catalog access; set `taco_path`
+in `CatalogConfig` to run against a local port. The Hurricane Milton notebooks
+are retained legacy visualization reproductions and require the repository's
+`ocean_taco.viz` helpers. Documentation does not execute notebooks automatically.
+OceanTACO and its dependencies.
 
 ```{toctree}
 :maxdepth: 1
 :caption: Tutorials
 
-data_retrieval_workflows
-ml_dataset
 spatio_temporal_query_generation
+ml_dataset
 plot_hurricane_milton
 plot_hurricane_milton_cross_product
+data_retrieval_workflows
 ```

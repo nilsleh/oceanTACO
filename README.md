@@ -76,36 +76,27 @@ pip install -e ".[hf]"
 pip install -e ".[generate,hf,tests]"
 ```
 
-## Repository Structure
+## Repository structure and ML workflow
 
-- `ocean_taco/dataset/`: main user API for loading data and generating queries.
-- `ocean_taco/generate_dataset/`: data acquisition and dataset build pipeline.
-- `ocean_taco/viz/`: visualization and analysis scripts.
-- `notebooks/`: tutorial and task-focused notebooks.
+- `ocean_taco/torch/`: the shipped `OceanTACODataset`, collators, and Core loader.
+- `ocean_taco/retrieve.py`: native-coordinate catalog retrieval.
+- `ocean_taco/generate_dataset/` and `ocean_taco/viz/`: repository-only production and analysis tooling.
 
-## Dataset + Queries
-
-Most users will interact with `ocean_taco/dataset/dataset.py` and `ocean_taco/dataset/queries.py`.
+ML sampling starts with a published `QuerySet`, then records an exact draw:
 
 ```python
-from ocean_taco.dataset import OceanTACODataset, QueryGenerator, PatchSize
+from ocean_taco import CatalogConfig, QuerySet, draw_queryset
+from ocean_taco.render import Resample
+from ocean_taco.torch import OceanTACODataset
 
-ds = OceanTACODataset(
-	taco_path="/path/to/OceanTACO",
-	input_variables=["l4_ssh", "l4_sst", "glorys_sss"],
-	target_variables=["l3_swot"],
-	temporal_agg="mean",
+queryset = QuerySet.read("release/querysets/pilot10")
+draw = draw_queryset(queryset, requested_row_count=32, seed=7, record_path="run.json")
+dataset = OceanTACODataset(
+    queries=draw,
+    sources={"l4_sst": Resample((64, 64), support_threshold=0.5)},
+    catalog_config=CatalogConfig(cache_dir=".oceantaco-cache"),
 )
-
-generator = QueryGenerator(land_mask_path=".ocean_mask_cache/land_mask.npy")
-queries = generator.generate_training_queries(
-	n_queries=32,
-	patch_size=PatchSize(1.0, "deg"),
-	date_range=("2024-01-01", "2024-01-31"),
-	max_land_fraction=0.3,
-)
-
-sample = ds[queries[0].to_geoslice()]
+sample = dataset[0]
 ```
 
 ## Patch Size from Resolution
