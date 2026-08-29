@@ -42,7 +42,6 @@ from ocean_taco.generate_dataset.download_swot import (
 )
 from ocean_taco.generate_dataset.download_tracker import DownloadTracker
 
-
 ALL_DOWNLOAD_SOURCES = [
     "glorys",
     "l4_ssh",
