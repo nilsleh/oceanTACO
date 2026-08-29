@@ -13,7 +13,9 @@ import os
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
+from typing import Literal
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -487,7 +489,6 @@ def load_glorys_data(data_dir, date_str):
 
 def load_l4_ssh_data(data_dir, date_str):
     """Load L4 SSH data."""
-    date_obj = datetime.strptime(date_str, "%Y%m%d")
     year, month = date_str[:4], date_str[4:6]
     # if date_obj < datetime(2025, 5, 1):
     #     subdir = "SEALEVEL_GLO_PHY_CLIMATE_L4_MY_008_057/c3s_obs-sl_glo_phy-ssh_my_twosat-l4-duacs-0.25deg_P1D_202411"
@@ -670,9 +671,19 @@ def load_argo_data(data_dir, date_str):
 def make_record(outfile, output_dir, base_timestamp, data_source, variable, 
                 region_name, bbox, geometry_wkb, time_range, sensor, 
                 dataset=None, **extra):
-    """Create a standardized record dict with microsecond timestamps and resolution info.
+    """Create a standardized record with timestamps and resolution information.
     
     Args:
+        outfile: Path to the generated data file.
+        output_dir: Root output directory used for the relative path.
+        base_timestamp: Timestamp represented by the record.
+        data_source: Identifier for the source dataset.
+        variable: Variable represented by the output file.
+        region_name: Name of the spatial region.
+        bbox: Bounding box of the spatial region.
+        geometry_wkb: WKB geometry for the spatial region.
+        time_range: Start and end timestamps in seconds, if available.
+        sensor: Sensor identifier for the record.
         dataset: Optional xarray Dataset to compute resolution from
         **extra: Additional fields to include in the record
     """
@@ -860,11 +871,6 @@ def process_and_split(ds, date_str, output_dir, modality, keep_vars=None, sensor
     return len(records), records
 
 
-import numpy as np
-from scipy.stats import binned_statistic_2d
-from typing import Literal
-
-
 def bin_swath_to_grid_conservative(
     lons: np.ndarray,
     lats: np.ndarray,
@@ -972,8 +978,7 @@ def process_swot_track_to_grid(
     target_lats: np.ndarray,
     resolution_km: float = 2.0,
 ) -> dict:
-    """
-    Process a single SWOT track onto a regular grid.
+    """Process a single SWOT track onto a regular grid.
     
     This is a thin wrapper that ensures the grid resolution matches
     the native SWOT resolution to avoid aliasing.
@@ -989,7 +994,7 @@ def process_swot_track_to_grid(
     resolution_km : float
         Target grid resolution (should match native ~2km)
         
-    Returns
+    Returns:
     -------
     dict with 'data', 'counts', 'lons', 'lats'
     """
@@ -2171,12 +2176,8 @@ def process_l3_ssh_data(data_dir, date_str, output_dir, resolution_km=7.0):
     return len(records), records
 
 
-import matplotlib.pyplot as plt
-
-
 def filter_and_plot_satellite_data(ds: xr.Dataset, satellites_to_keep: list[str], var_name="sla_filtered"):
-    """
-    Filters dataset to keep only specific satellites and plots the result.
+    """Filters dataset to keep only specific satellites and plots the result.
     
     Args:
         ds: xarray Dataset containing 'track_platforms' and 'primary_track'
@@ -2589,6 +2590,7 @@ def create_inventory(records, output_path):
 
 
 def main():
+    """Parse command-line arguments and generate the formatted SSH inventory."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--date-min", default="2024-01-01")
     parser.add_argument("--date-max", default="2024-01-04")

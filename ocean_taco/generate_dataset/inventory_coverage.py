@@ -18,6 +18,7 @@ SPATIAL_REGIONS = [
 
 
 def check_coverage(inventory_path):
+    """Report spatial and temporal coverage in an inventory file."""
     print(f"Loading inventory: {inventory_path}")
     df = pd.read_parquet(inventory_path)
 

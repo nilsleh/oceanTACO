@@ -11,9 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from ocean_taco.benchmarks.climatebenchpress.config import (
-    DEFAULT_BENCHMARK_MODALITIES,
-)
+from ocean_taco.benchmarks.climatebenchpress.config import DEFAULT_BENCHMARK_MODALITIES
 from ocean_taco.benchmarks.climatebenchpress.export_subset import (
     BenchmarkTileExporter,
     write_manifest,
