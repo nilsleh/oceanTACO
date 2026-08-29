@@ -29,6 +29,9 @@ OceanTACO provides co-located observations of sea surface height (SSH), sea surf
 getting_started
 dataset-workflows
 dataset-ml-loader
+sources
+train-eval-splits
+testing
 dataset_description
 dataset_generation
 tutorials/index

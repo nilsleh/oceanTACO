@@ -12,6 +12,18 @@
 ```{eval-rst}
 .. autoclass:: ocean_taco.torch.CoreSourceLoader
    :members:
+
+.. autoclass:: ocean_taco.torch.loader.PlannedSourceLoader
+   :members:
+```
+
+## Native-grid batching
+
+```{eval-rst}
+.. autoclass:: ocean_taco.torch.ShapeBucketSampler
+   :members:
+
+.. autofunction:: ocean_taco.torch.native_shapes
 ```
 
 ## Collation and worker setup

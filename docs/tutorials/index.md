@@ -1,16 +1,23 @@
 # Tutorials
 
-The first three notebooks below use the shipped QuerySet, retrieval, and PyTorch
-APIs. They expect a published QuerySet and Core catalog access; set `taco_path`
-in `CatalogConfig` to run against a local port. Documentation does not execute notebooks automatically; run them manually after installing `.[tutorials,viz]`. The Hurricane Milton notebooks
-are retained legacy visualization reproductions and require the repository's
-`ocean_taco.viz` helpers.
+The first four notebooks use the pinned Hugging Face Core revision and a shared
+cache directory outside the repository. They download at most eight QuerySet
+rows per draw. Install `.[tutorials,viz,hf]`, then execute and validate their
+stored outputs with:
+
+```sh
+bash scripts/dev/execute_notebooks.sh
+```
+
+The Hurricane Milton notebooks are retained legacy visualization reproductions
+and require the repository's `ocean_taco.viz` helpers.
 
 ```{toctree}
 :maxdepth: 1
 :caption: Tutorials
 
 ml_dataset
+ml_configuration_cookbook
 spatio_temporal_query_generation
 data_retrieval_workflows
 plot_hurricane_milton
