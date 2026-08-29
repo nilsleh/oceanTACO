@@ -17,6 +17,8 @@ notebooks=(
   docs/tutorials/ml_configuration_cookbook.ipynb
   docs/tutorials/spatio_temporal_query_generation.ipynb
   docs/tutorials/data_retrieval_workflows.ipynb
+  docs/tutorials/plot_hurricane_milton.ipynb
+  docs/tutorials/plot_hurricane_milton_cross_product.ipynb
 )
 
 for notebook in "${notebooks[@]}"; do
