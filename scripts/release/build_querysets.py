@@ -91,6 +91,30 @@ def _file_digest(path: Path, chunk: int = 1 << 20) -> str:
     return digest.hexdigest()
 
 
+def source_identity(uri: str, strategy: str) -> dict[str, str]:
+    """Return the recorded identity for one local source asset.
+
+    Shards are reusable only while the exact source files they measured are
+    still current. Keep this in one helper so the record written during
+    measurement and the record re-checked before reuse cannot drift apart.
+    """
+    path = Path(uri)
+    if strategy == "sha256":
+        return {
+            "uri": str(uri),
+            "identity_kind": "sha256",
+            "identity_value": _file_digest(path),
+        }
+    if strategy == "stat":
+        stat = path.stat()
+        return {
+            "uri": str(uri),
+            "identity_kind": "size_mtime",
+            "identity_value": f"{stat.st_size}:{int(stat.st_mtime_ns)}",
+        }
+    raise ValueError(f"Unknown asset identity strategy {strategy!r}.")
+
+
 def catalog_digest(taco_path: Path) -> tuple[str, dict[str, str]]:
     """Digest the catalog metadata that defines this local dataset revision."""
     parts: dict[str, str] = {}
@@ -476,18 +500,8 @@ def measure_date(
             for dataset in argo_tiles.values():
                 dataset.close()
 
-    for (region, token), uri in assets.items():
-        path = Path(uri)
-        if asset_identity == "sha256":
-            kind, value = "sha256", _file_digest(path)
-        else:
-            stat = path.stat()
-            kind, value = "size_mtime", f"{stat.st_size}:{int(stat.st_mtime_ns)}"
-        identities[(region, token)] = {
-            "uri": str(uri),
-            "identity_kind": kind,
-            "identity_value": value,
-        }
+    for key, uri in assets.items():
+        identities[key] = source_identity(uri, asset_identity)
 
     payload: dict[str, Any] = {}
     for key, entry in sorted(sets.items()):
@@ -569,8 +583,23 @@ def write_shard(
     return path
 
 
-def shard_is_valid(work_dir: Path, date: str, plan_id: str) -> bool:
-    """Whether a completed, matching shard already exists."""
+def shard_is_valid(
+    work_dir: Path,
+    date: str,
+    plan_id: str,
+    *,
+    assets: Mapping[tuple[str, str], str] | None = None,
+    asset_identity: str | None = None,
+) -> bool:
+    """Whether a completed shard still matches its plan and source assets.
+
+    Callers deciding whether to *reuse* a shard pass the current date's asset
+    records. This makes a corrected or re-downloaded source invalidate its old
+    measurement instead of merely re-attesting stale metadata at assemble
+    time. Callers which only verify an already selected shard may omit them.
+    """
+    if (assets is None) != (asset_identity is None):
+        raise ValueError("assets and asset_identity must be supplied together.")
     path = _shard_path(work_dir, date)
     sidecar = path.with_suffix(".done.json")
     if not path.is_file() or not sidecar.is_file():
@@ -579,9 +608,20 @@ def shard_is_valid(work_dir: Path, date: str, plan_id: str) -> bool:
         record = json.loads(sidecar.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return False
-    return record.get("plan_id") == plan_id and record.get("sha256") == _file_digest(
-        path
-    )
+    if record.get("plan_id") != plan_id or record.get("sha256") != _file_digest(path):
+        return False
+    if assets is None:
+        return True
+    try:
+        with np.load(path, allow_pickle=False) as archive:
+            meta = json.loads(str(archive["meta"].item()))
+        expected = {
+            f"{region}|{token}": source_identity(uri, asset_identity)
+            for (region, token), uri in sorted(assets.items())
+        }
+    except (FileNotFoundError, KeyError, OSError, ValueError, json.JSONDecodeError):
+        return False
+    return meta.get("identities") == expected
 
 
 def _worker_init(config: dict[str, Any]) -> None:
@@ -602,10 +642,16 @@ def _worker_measure(date: str) -> tuple[str, str, float]:
     config = _WORKER["config"]
     work_dir = Path(config["work_dir"])
     plan_id = config["plan_id"]
-    if shard_is_valid(work_dir, date, plan_id):
+    assets = date_assets(_WORKER["catalog"], date)
+    if shard_is_valid(
+        work_dir,
+        date,
+        plan_id,
+        assets=assets,
+        asset_identity=config["asset_identity"],
+    ):
         return date, "skipped", 0.0
     started = time.time()
-    assets = date_assets(_WORKER["catalog"], date)
     measured = measure_date(
         date,
         _WORKER["sets"],
@@ -913,7 +959,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             for index, date in enumerate(dates)
             if index % args.shard_count == args.shard_index
         ]
-        todo = [date for date in assigned if not shard_is_valid(args.work_dir, date, plan_id)]
+        todo = [
+            date
+            for date in assigned
+            if not shard_is_valid(
+                args.work_dir,
+                date,
+                plan_id,
+                assets=date_assets(catalog, date),
+                asset_identity=args.asset_identity,
+            )
+        ]
         print(
             f"[measure] {len(todo)}/{len(assigned)} dates to measure "
             f"(shard {args.shard_index}/{args.shard_count}, jobs {args.jobs})",
@@ -964,7 +1020,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.stage == "measure":
         return 0
 
-    missing = [date for date in dates if not shard_is_valid(args.work_dir, date, plan_id)]
+    missing = [
+        date
+        for date in dates
+        if not shard_is_valid(
+            args.work_dir,
+            date,
+            plan_id,
+            assets=date_assets(catalog, date),
+            asset_identity=args.asset_identity,
+        )
+    ]
     if missing:
         raise SystemExit(
             f"{len(missing)} shards missing (first: {missing[0]}); "

@@ -281,6 +281,39 @@ def test_shard_resume_is_idempotent(tmp_path):
     assert not builder.shard_is_valid(tmp_path, "2024-06-02", "plan-a")
 
 
+def test_shard_resume_rechecks_current_source_identities(tmp_path):
+    """A corrected source file must invalidate an otherwise sound shard."""
+    import build_querysets as builder
+
+    asset = tmp_path / "l3_ssh.nc"
+    asset.write_bytes(b"first version")
+    assets = {("NORTH_ATLANTIC", "l3_ssh"): str(asset)}
+    measured = {
+        "columns": {"512-training/swot_valid_cells": np.arange(4, dtype=np.int64)},
+        "identities": {
+            key: builder.source_identity(uri, "stat") for key, uri in assets.items()
+        },
+        "present": {"l3_ssh": frozenset({"NORTH_ATLANTIC"})},
+    }
+    builder.write_shard(tmp_path, "2024-06-02", "plan-a", measured)
+    assert builder.shard_is_valid(
+        tmp_path,
+        "2024-06-02",
+        "plan-a",
+        assets=assets,
+        asset_identity="stat",
+    )
+
+    asset.write_bytes(b"corrected source version")
+    assert not builder.shard_is_valid(
+        tmp_path,
+        "2024-06-02",
+        "plan-a",
+        assets=assets,
+        asset_identity="stat",
+    )
+
+
 def test_region_mask_fits_uint8():
     import build_querysets as builder
 

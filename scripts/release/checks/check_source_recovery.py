@@ -20,6 +20,8 @@ from ocean_taco.geobox import PatchSize
 from ocean_taco.registry import get_modality
 from ocean_taco.sampling.ocean_mask import load_released_ocean_mask
 
+from check_grid_coverage import open_ocean_mask
+
 SETS = ("128-eval", "256-eval", "512-eval", "128-training", "256-training", "512-training")
 
 
@@ -27,7 +29,8 @@ def _canonical_lon(values: np.ndarray) -> np.ndarray:
     return (np.asarray(values, dtype=float) + 180.0) % 360.0 - 180.0
 
 
-def _ocean(mask, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+def _mask_values(mask, values: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+    """Look up mask-aligned values at arbitrary source coordinates."""
     lat, lon = np.broadcast_arrays(np.asarray(lat, dtype=float), np.asarray(lon, dtype=float))
     flat_lat, flat_lon = lat.ravel(), lon.ravel()
     lat_index = np.searchsorted(mask.lat, flat_lat).clip(1, len(mask.lat) - 1)
@@ -35,7 +38,7 @@ def _ocean(mask, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
     lat_index -= np.abs(mask.lat[lat_index - 1] - flat_lat) <= np.abs(mask.lat[lat_index] - flat_lat)
     lon_index -= np.abs(mask.lon[lon_index - 1] - flat_lon) <= np.abs(mask.lon[lon_index] - flat_lon)
     domain = (flat_lat >= mask.lat[0]) & (flat_lat <= mask.lat[-1])
-    return (mask.ocean_mask[lat_index, lon_index] & domain).reshape(lat.shape)
+    return (values[lat_index, lon_index] & domain).reshape(lat.shape)
 
 
 def _cover_grid(lat: np.ndarray, lon: np.ndarray, lats: np.ndarray, lons: np.ndarray, patch: PatchSize) -> np.ndarray:
@@ -71,8 +74,8 @@ def _sample_dates(total: int, count: int) -> set[int]:
     return set(np.linspace(0, total - 1, min(total, count), dtype=int).tolist())
 
 
-def _swot_misses(rows, mask, lats, lons, patch) -> int:
-    """Count uncovered finite ocean SWOT cells across a date's regional assets."""
+def _swot_misses(rows, mask, open_ocean, lats, lons, patch) -> int:
+    """Count uncovered finite open-ocean SWOT cells across a date's assets."""
     axes = []
     for row in rows:
         with xr.open_dataset(row["uri"], engine="h5netcdf") as dataset:
@@ -91,8 +94,8 @@ def _swot_misses(rows, mask, lats, lons, patch) -> int:
             values = np.asarray(dataset[spec.primary_variable].squeeze().values)[:, order]
             rs = np.searchsorted(global_lat, lat)
             cs = np.searchsorted(global_lon, lon)
-            ocean = _ocean(mask, *np.meshgrid(lat, lon, indexing="ij"))
-            missed += int((np.isfinite(values) & ocean & ~covered[np.ix_(rs, cs)]).sum())
+            eligible = _mask_values(mask, open_ocean, *np.meshgrid(lat, lon, indexing="ij"))
+            missed += int((np.isfinite(values) & eligible & ~covered[np.ix_(rs, cs)]).sum())
     return missed
 
 
@@ -103,6 +106,7 @@ def check(root: Path, date_count: int, sets: tuple[str, ...] = SETS) -> list[str
         directory = root / name
         header = json.loads((directory / "header.json").read_text(encoding="utf-8"))
         patch = PatchSize(float(header["patch_size"]["value"]), str(header["patch_size"]["unit"]))
+        open_ocean = open_ocean_mask(mask, patch)
         positions = pq.read_table(directory / "positions.parquet", columns=["centre_lon", "centre_lat"])
         lons, lats = positions.column("centre_lon").to_numpy(), positions.column("centre_lat").to_numpy()
         groups = defaultdict(list)
@@ -113,18 +117,18 @@ def check(root: Path, date_count: int, sets: tuple[str, ...] = SETS) -> list[str
         for date_index in _sample_dates(len(header["dates"]), date_count):
             swot = groups.get((date_index, "l3_swot"), [])
             if swot:
-                missed["l3_swot"] += _swot_misses(swot, mask, lats, lons, patch)
+                missed["l3_swot"] += _swot_misses(swot, mask, open_ocean, lats, lons, patch)
             for row in groups.get((date_index, "argo"), []):
                 with xr.open_dataset(row["uri"], engine="h5netcdf") as dataset:
                     point_lat = np.asarray(dataset["lat"].values, dtype=float).reshape(-1)
                     point_lon = _canonical_lon(dataset["lon"].values).reshape(-1)
-                    keep = _ocean(mask, point_lat, point_lon)
+                    keep = _mask_values(mask, open_ocean, point_lat, point_lon)
                     if keep.any():
                         missed["argo"] += int((~_contains_points(point_lat[keep], point_lon[keep], lats, lons, patch)).sum())
         print(f"{name:14s} sampled-dates={date_count} missed-swot={missed['l3_swot']} missed-argo={missed['argo']}", flush=True)
         for token, count in missed.items():
             if count:
-                failures.append(f"{name}: {count} ocean {token} observations are outside every published footprint")
+                failures.append(f"{name}: {count} open-ocean {token} observations are outside every published footprint")
     return failures
 
 
