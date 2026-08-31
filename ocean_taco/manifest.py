@@ -203,9 +203,134 @@ def _schemas():
     }
 
 
+class _ArrowRow(Mapping):
+    """One row of a published table, read from Arrow columns on access.
+
+    Published tables are wide and long: the 256 km training coverage table has
+    9.4 million rows.  Materialising those as dicts costs gigabytes, while the
+    parquet file itself is 40 MB, so rows are projected out of the columnar
+    buffers one at a time instead.
+    """
+
+    __slots__ = ("_columns", "_index")
+
+    def __init__(self, columns: Mapping[str, Any], index: int) -> None:
+        self._columns = columns
+        self._index = index
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            column = self._columns[key]
+        except KeyError:
+            raise KeyError(key) from None
+        return column[self._index].as_py()
+
+    def __iter__(self):
+        return iter(self._columns)
+
+    def __len__(self) -> int:
+        return len(self._columns)
+
+    def __repr__(self) -> str:
+        return repr(dict(self))
+
+
+class _ArrowRows(tuple):
+    """A read-only sequence of :class:`_ArrowRow` over one Arrow table.
+
+    Subclasses :class:`tuple` so that the published dataclass stays frozen and
+    hashable-by-identity, while the rows themselves are never materialised.
+    ``__new__`` builds an empty tuple; every sequence operation is served from
+    the retained columns.
+    """
+
+    def __new__(cls, table):
+        return super().__new__(cls)
+
+    def __init__(self, table) -> None:
+        self._columns = {name: table.column(name) for name in table.column_names}
+        self._count = table.num_rows
+
+    def __len__(self) -> int:
+        return self._count
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return tuple(self[position] for position in range(*index.indices(self._count)))
+        if index < 0:
+            index += self._count
+        if not 0 <= index < self._count:
+            raise IndexError("row index out of range")
+        return _ArrowRow(self._columns, index)
+
+    def __iter__(self):
+        for index in range(self._count):
+            yield _ArrowRow(self._columns, index)
+
+    def __repr__(self) -> str:
+        return f"<{self._count} rows>"
+
+    def column(self, name: str) -> list[Any]:
+        """Return one whole column as Python values, without building rows."""
+        return self._columns[name].to_pylist()
+
+
 def _table_digest(rows: tuple[Mapping[str, Any], ...]) -> str:
     """Use canonical content for an unpublished in-memory builder identity."""
     return content_sha256(rows)
+
+
+def _validate_coverage_columns(
+    rows: _ArrowRows, keys: set[str], position_count: int, date_count: int
+) -> None:
+    """Check the coverage contract on whole columns rather than row by row.
+
+    The guarantees are the ones the row loop enforces: exact columns, every
+    (position, date) pair present exactly once, indices in range, and no
+    negative measurement.  Working column-wise keeps a 9.4 million row table
+    at the size of its Arrow buffers.
+    """
+    from pyarrow import compute
+
+    actual = set(rows._columns)
+    if actual != keys:
+        missing, extra = sorted(keys - actual), sorted(actual - keys)
+        raise ValueError(
+            f"coverage row has wrong columns; missing={missing}, extra={extra}."
+        )
+    if len(rows) != position_count * date_count:
+        raise ValueError(
+            "coverage must contain every published (position, date) pair exactly once."
+        )
+    positions = rows._columns["position_index"]
+    dates = rows._columns["date_index"]
+    if compute.min(positions).as_py() != 0 or compute.max(positions).as_py() != position_count - 1:
+        raise ValueError("coverage references an unknown position or date.")
+    if compute.min(dates).as_py() != 0 or compute.max(dates).as_py() != date_count - 1:
+        raise ValueError("coverage references an unknown position or date.")
+    # Canonical order is position-major, so the pair (p, d) must appear at row
+    # p * date_count + d.  Comparing the encoded pair against that sequence
+    # proves uniqueness and completeness together, without building a set of
+    # every pair.
+    import numpy as np
+
+    encoded = np.asarray(
+        compute.add(
+            compute.multiply(compute.cast(positions, "int64"), date_count),
+            compute.cast(dates, "int64"),
+        )
+    )
+    if not np.array_equal(encoded, np.arange(len(rows), dtype=encoded.dtype)):
+        raise ValueError(
+            "coverage must contain every published (position, date) pair exactly once."
+        )
+    for key in sorted(keys - {"position_index", "date_index"}):
+        column = rows._columns[key]
+        minimum = compute.min(column).as_py()
+        if minimum is not None and minimum < 0:
+            raise ValueError(
+                f"coverage.{key} must be a nullable non-negative integer."
+            )
 
 
 def _require_exact_keys(row: Mapping[str, Any], keys: set[str], table: str) -> None:
@@ -295,12 +420,18 @@ class QuerySet:
                 key=lambda row: row["position_index"],
             )
         )
-        normal_coverage = tuple(
-            sorted(
-                (_normalise(dict(row)) for row in self.coverage),
-                key=lambda row: (row["position_index"], row["date_index"]),
+        # A table read back from parquet already carries the published schema
+        # and canonical (position_index, date_index) order, so re-normalising
+        # and re-sorting it would cost gigabytes to reproduce what it is.
+        if isinstance(self.coverage, _ArrowRows):
+            normal_coverage = self.coverage
+        else:
+            normal_coverage = tuple(
+                sorted(
+                    (_normalise(dict(row)) for row in self.coverage),
+                    key=lambda row: (row["position_index"], row["date_index"]),
+                )
             )
-        )
         normal_assets = tuple(
             sorted(
                 (_normalise(dict(row)) for row in self.assets),
@@ -359,33 +490,38 @@ class QuerySet:
                 )
             indices.add(row["position_index"])
 
-        seen_pairs: set[tuple[int, int]] = set()
-        for row in normal_coverage:
-            _require_exact_keys(row, coverage_keys, "coverage")
-            pair = (row["position_index"], row["date_index"])
-            if pair in seen_pairs:
-                raise ValueError(
-                    "coverage contains a duplicate (position_index, date_index) pair."
+        if isinstance(normal_coverage, _ArrowRows):
+            _validate_coverage_columns(
+                normal_coverage, coverage_keys, len(indices), len(dates)
+            )
+        else:
+            seen_pairs: set[tuple[int, int]] = set()
+            for row in normal_coverage:
+                _require_exact_keys(row, coverage_keys, "coverage")
+                pair = (row["position_index"], row["date_index"])
+                if pair in seen_pairs:
+                    raise ValueError(
+                        "coverage contains a duplicate (position_index, date_index) pair."
+                    )
+                seen_pairs.add(pair)
+                if pair[0] not in indices or not 0 <= pair[1] < len(dates):
+                    raise ValueError("coverage references an unknown position or date.")
+                _validate_non_negative(
+                    row,
+                    tuple(
+                        key
+                        for key in coverage_keys
+                        if key not in {"position_index", "date_index"}
+                    ),
+                    "coverage",
                 )
-            seen_pairs.add(pair)
-            if pair[0] not in indices or not 0 <= pair[1] < len(dates):
-                raise ValueError("coverage references an unknown position or date.")
-            _validate_non_negative(
-                row,
-                tuple(
-                    key
-                    for key in coverage_keys
-                    if key not in {"position_index", "date_index"}
-                ),
-                "coverage",
-            )
-        expected_pairs = {
-            (position, date) for position in indices for date in range(len(dates))
-        }
-        if seen_pairs != expected_pairs:
-            raise ValueError(
-                "coverage must contain every published (position, date) pair exactly once."
-            )
+            expected_pairs = {
+                (position, date) for position in indices for date in range(len(dates))
+            }
+            if seen_pairs != expected_pairs:
+                raise ValueError(
+                    "coverage must contain every published (position, date) pair exactly once."
+                )
 
         seen_assets: set[tuple[int, str, str]] = set()
         for row in normal_assets:
@@ -434,11 +570,19 @@ class QuerySet:
                     )
 
         supplied_checksums = header.get("table_sha256")
-        content_checksums = {
-            "positions": _table_digest(normal_positions),
-            "coverage": _table_digest(normal_coverage),
-            "assets": _table_digest(normal_assets),
-        }
+        # Recomputing the canonical digest of a published table would re-encode
+        # every row.  It is only needed to mint an identity for a set that does
+        # not carry one; a published set is verified against its parquet bytes
+        # in :meth:`read` instead.
+        content_checksums = (
+            None
+            if supplied_checksums is not None
+            else {
+                "positions": _table_digest(normal_positions),
+                "coverage": _table_digest(normal_coverage),
+                "assets": _table_digest(normal_assets),
+            }
+        )
         if supplied_checksums is not None and set(supplied_checksums) != set(
             TABLE_FILENAMES
         ):
@@ -573,7 +717,12 @@ class QuerySet:
     @staticmethod
     def _write_parquet(path: Path, rows: tuple[Mapping[str, Any], ...], schema) -> None:
         pa, pq = _arrow()
-        table = pa.Table.from_pylist([dict(row) for row in rows], schema=schema)
+        if isinstance(rows, _ArrowRows):
+            # Already columnar and already in the published schema: rebuilding
+            # dicts to rebuild the same table would undo the point of the view.
+            table = pa.table({name: rows._columns[name] for name in schema.names}).cast(schema)
+        else:
+            table = pa.Table.from_pylist([dict(row) for row in rows], schema=schema)
         pq.write_table(
             table,
             path,
@@ -596,14 +745,22 @@ class QuerySet:
             raise ValueError(
                 "Published QuerySet header has no complete table_sha256 mapping."
             )
-        tables: dict[str, tuple[Mapping[str, Any], ...]] = {}
+        tables: dict[str, Any] = {}
         _, pq = _arrow()
         for table_name, filename in TABLE_FILENAMES.items():
             path = directory / filename
             actual = sha256(path.read_bytes()).hexdigest()
             if checksums[table_name] != actual:
                 raise ValueError(f"QuerySet checksum mismatch for {filename}.")
-            tables[table_name] = tuple(pq.read_table(path).to_pylist())
+            table = pq.read_table(path)
+            # Coverage is the one table large enough for row materialisation to
+            # dominate: it holds one row per position per date.  The others are
+            # small, and code that consumes them expects plain dicts.
+            tables[table_name] = (
+                _ArrowRows(table)
+                if table_name == "coverage"
+                else tuple(table.to_pylist())
+            )
         return cls(
             header=header,
             positions=tables["positions"],

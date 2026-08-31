@@ -47,3 +47,157 @@ def test_shape_bucket_sampler_uses_epoch():
     first = list(sampler)
     sampler.set_epoch(1)
     assert first != list(sampler)
+
+
+def _published_queryset(tmp_path, position_count=3, date_count=4):
+    """Write a small published QuerySet and return its directory."""
+    from ocean_taco.manifest import (
+        QuerySet,
+        _schemas,
+        canonical_json,
+        content_sha256,
+        position_id,
+    )
+
+    dates = [f"2024-01-0{index + 1}T00:00:00.000000Z" for index in range(date_count)]
+    tokens = ["l3_ssh"]
+    positions = [
+        {
+            "position_index": index,
+            "position_id": position_id(
+                grid_id="grid", centre_lon=float(index), centre_lat=float(index)
+            ),
+            "centre_lon": float(index),
+            "centre_lat": float(index),
+            "region_mask": 1,
+            "swot_footprint_cells": 2,
+            "swot_ocean_cells": 2,
+            "ssh_footprint_cells": 2,
+            "ssh_ocean_cells": 2,
+        }
+        for index in range(position_count)
+    ]
+    coverage = [
+        {
+            "position_index": position,
+            "date_index": date,
+            "swot_valid_cells": position + date,
+            "swot_valid_ocean_cells": position,
+            "swot_n_obs_sum": date,
+            "ssh_valid_cells": 1,
+            "ssh_valid_ocean_cells": 1,
+            # A null must survive the round trip as null, never as zero.
+            "argo_profile_count": None if date == 0 else date,
+        }
+        for position in range(position_count)
+        for date in range(date_count)
+    ]
+    assets = [
+        {
+            "date_index": date,
+            "region": "GLOBAL",
+            "token": token,
+            "asset_id": "",
+            "uri": "",
+            "identity_kind": "",
+            "identity_value": "",
+            "status": "missing",
+        }
+        for date in range(date_count)
+        for token in tokens
+    ]
+
+    directory = tmp_path / "published"
+    directory.mkdir()
+    schemas = _schemas()
+    checksums = {}
+    for name, rows in (("positions", positions), ("coverage", coverage), ("assets", assets)):
+        path = directory / f"{name}.parquet"
+        # Publish with the library's own writer so the fixture's bytes are the
+        # bytes a real published set has.
+        QuerySet._write_parquet(path, tuple(rows), schemas[name])
+        checksums[name] = __import__("hashlib").sha256(path.read_bytes()).hexdigest()
+
+    header = {
+        "schema_version": "queryset/v1",
+        "patch_size": {"value": 20.0, "unit": "km"},
+        "kind": "training",
+        "grid_spacing_km": 20.0,
+        "grid_id": "grid",
+        "dataset_revision": "fixture-revision",
+        "catalog_sha256": "catalog",
+        "registry_sha256": "registry",
+        "source_records_sha256": "records",
+        "ocean_mask_id": "mask",
+        "ocean_mask_sha256": "mask-sha",
+        "dates": dates,
+        "date_sha256": content_sha256(dates),
+        "tokens": tokens,
+        "parquet_profile": {"compression": "zstd"},
+        "code_commit": "commit",
+        "environment_lock_hash": "environment",
+        "table_sha256": checksums,
+    }
+    identity = {key: value for key, value in header.items() if key != "table_sha256"}
+    header["queryset_id"] = content_sha256(
+        {"header": identity, "table_sha256": checksums}
+    )
+    (directory / "header.json").write_bytes(canonical_json(header) + b"\n")
+    return directory, coverage, header["queryset_id"]
+
+
+def test_published_coverage_reads_without_materialising_rows(tmp_path):
+    """Coverage is served from Arrow columns, with identical values and identity."""
+    from ocean_taco.manifest import QuerySet, _ArrowRows
+
+    directory, expected, identifier = _published_queryset(tmp_path)
+    queryset = QuerySet.read(directory)
+
+    assert isinstance(queryset.coverage, _ArrowRows)
+    assert queryset.queryset_id == identifier
+    assert len(queryset.coverage) == len(expected)
+    assert [dict(row) for row in queryset.coverage] == expected
+    # Indexing, negative indexing, and the canonical accessor agree.
+    assert dict(queryset.coverage[5]) == expected[5]
+    assert dict(queryset.coverage[-1]) == expected[-1]
+    assert dict(queryset.coverage_row(1, 2)) == expected[1 * 4 + 2]
+    # A null coverage value stays null: it is unmeasured, not measured zero.
+    assert queryset.coverage[0]["argo_profile_count"] is None
+
+
+def test_published_queryset_round_trips_through_the_columnar_view(tmp_path):
+    """Reading and rewriting a published set preserves its content identity."""
+    from ocean_taco.manifest import QuerySet
+
+    directory, _, identifier = _published_queryset(tmp_path)
+    queryset = QuerySet.read(directory)
+    queryset.write(tmp_path / "republished")
+    assert QuerySet.read(tmp_path / "republished").queryset_id == identifier
+
+
+def test_corrupt_published_coverage_is_rejected(tmp_path):
+    """The columnar validator enforces the contract the row loop enforced."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    import pytest
+
+    from ocean_taco.manifest import QuerySet, _schemas
+
+    directory, coverage, _ = _published_queryset(tmp_path)
+    # Drop one pair, so the table is no longer the complete cartesian product.
+    truncated = [row for row in coverage if not (row["position_index"] == 1 and row["date_index"] == 2)]
+    path = directory / "coverage.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(truncated, schema=_schemas()["coverage"]), path
+    )
+    header_path = directory / "header.json"
+    import json
+    from hashlib import sha256
+
+    header = json.loads(header_path.read_text())
+    header["table_sha256"]["coverage"] = sha256(path.read_bytes()).hexdigest()
+    header.pop("queryset_id")
+    header_path.write_text(json.dumps(header))
+
+    with pytest.raises(ValueError, match="every published"):
+        QuerySet.read(directory)
