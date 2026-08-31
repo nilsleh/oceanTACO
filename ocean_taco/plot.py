@@ -23,7 +23,7 @@ def plot_ocean_sample(sample: dict[str, Any], token: str, *, time_index: int = 0
     sources are plotted at their geographical locations.
     """
     try:
-        import matplotlib.pyplot as pyplot
+        from matplotlib import pyplot
     except ImportError as error:  # pragma: no cover - depends on optional extra
         raise ImportError("plot_ocean_sample requires the 'viz' extra (matplotlib).") from error
     if token not in sample:
@@ -38,16 +38,18 @@ def plot_ocean_sample(sample: dict[str, Any], token: str, *, time_index: int = 0
         ax.set_xlabel("longitude")
         ax.set_ylabel("latitude")
         return artist
+    if data.ndim not in (3, 4):
+        raise ValueError("plot_ocean_sample expects a grid (T,H,W) or vector pair (T,2,H,W).")
+    # Bound before indexing: a structurally absent source renders as (0,H,W),
+    # where indexing first would raise IndexError instead of this message.
+    if time_index < 0 or time_index >= data.shape[0]:
+        raise ValueError("time_index is outside the source record.")
     if data.ndim == 4:
         if component not in (0, 1):
             raise ValueError("component must be 0 (eastward) or 1 (northward).")
         image = data[time_index, component]
-    elif data.ndim == 3:
-        image = data[time_index]
     else:
-        raise ValueError("plot_ocean_sample expects a grid (T,H,W) or vector pair (T,2,H,W).")
-    if time_index < 0 or time_index >= data.shape[0]:
-        raise ValueError("time_index is outside the source record.")
+        image = data[time_index]
     extent = (float(lon[0]), float(lon[-1]), float(lat[0]), float(lat[-1])) if lat.size and lon.size else None
     artist = ax.imshow(image, origin="lower", extent=extent, aspect="auto")
     ax.set_xlabel("longitude")
