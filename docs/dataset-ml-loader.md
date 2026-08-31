@@ -5,9 +5,8 @@ query generation. A QuerySet fixes the candidate position/date population and
 its coverage evidence. An experiment then filters and draws rows reproducibly,
 and `OceanTACODataset` renders those rows into PyTorch samples.
 
-The published `pilot10/` directory contains six QuerySets named
-`<patch-size-km>-<kind>/`, such as `512-eval/` and `512-training/`. Read one
-concrete directory, never the parent `pilot10/` directory. `kind` is a
+Published QuerySets are named `<patch-size-km>-<kind>`, and
+`QuerySet.from_hub(256, "eval")` fetches one by name. `kind` is a
 release-level label; choose and record date/geographic guards appropriate to
 your scientific split (see {doc}`train-eval-splits`).
 
@@ -22,7 +21,7 @@ from ocean_taco import CatalogConfig, QueryFilter, QuerySet, draw_queryset
 from ocean_taco.render import Resample
 from ocean_taco.torch import OceanTACODataset, collate_ocean_samples, seed_ocean_taco_worker
 
-queryset = QuerySet.read("release/querysets/pilot10/512-eval")
+queryset = QuerySet.from_hub(256, "eval")
 draw = draw_queryset(
     queryset,
     requested_row_count=256,
@@ -37,7 +36,7 @@ dataset = OceanTACODataset(
         "l4_sst": Resample((128, 128), support_threshold=0.5),
         "l3_swot": Resample((128, 128), support_threshold=0.5),
     },
-    catalog_config=CatalogConfig(cache_dir=".oceantaco-cache"),
+    catalog_config=CatalogConfig(),
 )
 loader = DataLoader(
     dataset,
@@ -60,7 +59,7 @@ replayed = OceanTACODataset(
     queries=queryset,
     experiment_record="runs/experiment-42.json",
     sources={"l4_sst": Resample((128, 128), support_threshold=0.5)},
-    catalog_config=CatalogConfig(cache_dir=".oceantaco-cache"),
+    catalog_config=CatalogConfig(),
 )
 ```
 
@@ -201,7 +200,7 @@ from ocean_taco.torch import ShapeBucketSampler, native_shapes, collate_ocean_sa
 native_dataset = OceanTACODataset(
     queries=draw,
     sources={"l4_sst": Native()},
-    catalog_config=CatalogConfig(cache_dir=".oceantaco-cache"),
+    catalog_config=CatalogConfig(),
 )
 sampler = ShapeBucketSampler(native_shapes(native_dataset, "l4_sst"), batch_size=4)
 loader = DataLoader(native_dataset, batch_sampler=sampler, collate_fn=collate_ocean_samples)

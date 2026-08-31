@@ -6,8 +6,8 @@ evidence, while a `QueryFilter` selects a subset of that population. Decide
 the split before drawing, retain both experiment records, and ensure that a
 row (or its scientific dependency) does not appear on both sides.
 
-`pilot10/` contains six published QuerySets named
-`<patch-size-km>-<kind>/` (for example `512-eval/`). The kind is a release
+Published QuerySets are named `<patch-size-km>-<kind>` (for example
+`256-eval`), and `QuerySet.from_hub` fetches one by name. The kind is a release
 label, not a proof that any downstream model has no leakage.
 
 ## Date-held-out split
@@ -18,8 +18,8 @@ remain inside each QuerySet's canonical date domain.
 ```python
 from ocean_taco import QueryFilter, QuerySet, draw_queryset
 
-train = QuerySet.read("/path/to/pilot10/512-training")
-evaluation = QuerySet.read("/path/to/pilot10/512-eval")
+train = QuerySet.from_hub(256, "training")
+evaluation = QuerySet.from_hub(256, "eval")
 
 train_draw = draw_queryset(
     train,

@@ -221,3 +221,7 @@ notebooks/ml_workflow_executed.ipynb
 # Ignore Markdown files outside docs/
 **/*.md
 !docs/**/*.md
+
+# Local notebook execution artifacts (never committed)
+docs/tutorials/*.local.*
+docs/tutorials/draws/

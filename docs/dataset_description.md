@@ -151,7 +151,7 @@ OceanTACO is hosted on HuggingFace and can be accessed without downloading the f
 from ocean_taco import CatalogConfig, GeoBox
 from ocean_taco.retrieve import load_bbox_nc, load_hf_dataset, load_tile_nc
 
-config = CatalogConfig(cache_dir=".oceantaco-cache")
+config = CatalogConfig()
 catalog = load_hf_dataset(config)
 
 # Load one named-region tile.

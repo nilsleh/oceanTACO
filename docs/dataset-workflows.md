@@ -10,7 +10,7 @@ selection are explicit.
 from ocean_taco import CatalogConfig, GeoBox
 from ocean_taco.retrieve import load_bbox_nc, load_hf_dataset
 
-config = CatalogConfig(cache_dir=".oceantaco-cache")
+config = CatalogConfig()
 catalog = load_hf_dataset(config)
 sst = load_bbox_nc(
     catalog,

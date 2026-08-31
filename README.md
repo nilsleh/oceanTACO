@@ -1,7 +1,7 @@
 # OceanTACO
 
 [![docs](https://app.readthedocs.org/projects/oceantaco/badge/?version=latest)](https://oceantaco.readthedocs.io/en/latest/)
-[![pypi](https://badge.fury.io/py/oceantaco.svg)](https://pypi.org/project/ocean-taco/)
+[![pypi](https://badge.fury.io/py/oceantaco.svg)](https://pypi.org/project/oceantaco/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Language: Python](https://img.shields.io/badge/language-Python%203.11%2B-green?logo=python&logoColor=green)](https://www.python.org)
 
@@ -48,16 +48,16 @@ Most users should install directly from PyPI:
 
 ```sh
 # Core package
-pip install ocean-taco
+pip install oceantaco
 
 # With Hugging Face helpers
-pip install "ocean-taco[hf]"
+pip install "oceantaco[hf]"
 ```
 
 If you want the latest development version from GitHub:
 
 ```sh
-pip install "ocean_taco[hf] @ git+https://github.com/nilsleh/oceanTACO.git@main"
+pip install "oceantaco @ git+https://github.com/nilsleh/oceanTACO.git@main"
 ```
 
 If you have cloned this repository and want a local editable install, run the following from the repository root:
@@ -89,12 +89,12 @@ from ocean_taco import CatalogConfig, QuerySet, draw_queryset
 from ocean_taco.render import Resample
 from ocean_taco.torch import OceanTACODataset
 
-queryset = QuerySet.read("release/querysets/pilot10/512-eval")
+queryset = QuerySet.from_hub(256, "eval")
 draw = draw_queryset(queryset, requested_row_count=32, seed=7, record_path="run.json")
 dataset = OceanTACODataset(
     queries=draw,
     sources={"l4_sst": Resample((64, 64), support_threshold=0.5)},
-    catalog_config=CatalogConfig(cache_dir=".oceantaco-cache"),
+    catalog_config=CatalogConfig(),
 )
 sample = dataset[0]
 ```

@@ -40,14 +40,18 @@ Treat the documentation build as a warning-free check:
 sphinx-build -W -b html docs docs/_build/html
 ```
 
-The tutorial notebooks are executed explicitly, against the pinned Hugging
-Face revision, with a temporary shared cache outside the repository:
+The tutorial notebooks are generated from
+`scripts/dev/restore_tutorial_notebooks.py` and executed against the pinned
+Hugging Face revision. Regenerating clears stored outputs, so the two steps run
+together and the result is reviewed before it is committed:
 
 ```sh
-bash scripts/dev/execute_notebooks.sh
+python scripts/dev/restore_tutorial_notebooks.py
+python scripts/dev/execute_tutorial_notebooks.py
 ```
 
-The script uses `nbconvert --execute` with a 1800-second timeout, verifies that
-each code cell has a successful output, and writes successful outputs back into
-the tracked notebooks. It does not add `docs/_build`, notebook checkpoints, or
-downloaded assets to the worktree.
+The executor runs with `allow_errors=True`, so a failing cell leaves its
+partial output and a traceback in the notebook's metadata for inspection
+instead of aborting the run; it returns non-zero if any cell errored. Set
+`HF_HOME` to a volume with room first. Neither script adds `docs/_build`,
+notebook checkpoints, or downloaded assets to the worktree.

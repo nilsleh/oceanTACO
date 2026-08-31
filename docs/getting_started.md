@@ -10,7 +10,7 @@ Python 3.12 or newer is required.
 ## Installation
 
 ```sh
-pip install ocean-taco
+pip install oceantaco
 ```
 
 For a development checkout, install the test extras with `pip install -e
@@ -22,7 +22,7 @@ For a development checkout, install the test extras with `pip install -e
 from ocean_taco import CatalogConfig, GeoBox
 from ocean_taco.retrieve import load_bbox_nc, load_hf_dataset
 
-config = CatalogConfig(cache_dir=".oceantaco-cache")
+config = CatalogConfig()
 catalog = load_hf_dataset(config)
 sst = load_bbox_nc(
     catalog,
@@ -33,8 +33,10 @@ sst = load_bbox_nc(
 )
 ```
 
-Pass `CatalogConfig(taco_path="/path/to/OceanTACO", cache_dir=".oceantaco-cache")`
-for a local catalog. The location must be the `OceanTACO` directory itself.
+`CatalogConfig()` needs no arguments: remote assets are fetched and cached by
+`huggingface_hub` under `HF_HOME`. Pass
+`CatalogConfig(taco_path="/path/to/OceanTACO")` to read a local catalog instead;
+the location must be the `OceanTACO` directory itself.
 
 ## Build reproducible ML samples
 
@@ -45,12 +47,12 @@ from ocean_taco import CatalogConfig, QuerySet, draw_queryset
 from ocean_taco.render import Resample
 from ocean_taco.torch import OceanTACODataset, collate_ocean_samples, seed_ocean_taco_worker
 
-queryset = QuerySet.read("release/querysets/pilot10/512-eval")
+queryset = QuerySet.from_hub(256, "eval")
 draw = draw_queryset(queryset, requested_row_count=64, seed=7, record_path="run.json")
 dataset = OceanTACODataset(
     queries=draw,
     sources={"l4_sst": Resample((64, 64), support_threshold=0.5)},
-    catalog_config=CatalogConfig(cache_dir=".oceantaco-cache"),
+    catalog_config=CatalogConfig(),
 )
 loader = DataLoader(
     dataset,
