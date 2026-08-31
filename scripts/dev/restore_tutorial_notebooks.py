@@ -20,10 +20,24 @@ def md(text): return nbf.v4.new_markdown_cell(dedent(text).strip())
 def code(text): return nbf.v4.new_code_cell(dedent(text).strip())
 
 SETUP = """
+import os
+import warnings
 from io import BytesIO
 from pathlib import Path
 
 from IPython.display import Image, display
+
+# Hub transfers report progress on stderr, which would otherwise be captured as
+# notebook output and rendered as noise in the documentation.
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+
+# Warnings raised by the library are part of what these tutorials demonstrate,
+# but Python's default format prefixes each one with the absolute path of the
+# file that raised it, which is an artifact of the machine that built the docs.
+def _format_warning(message, category, filename, lineno, line=None):
+    return f"{category.__name__}: {message}\\n"
+
+warnings.formatwarning = _format_warning
 
 def display_figure(fig):
     buffer = BytesIO()
@@ -58,10 +72,9 @@ write("ml_dataset.ipynb", [
 
 A QuerySet is a released *population* of positions and dates. A filter selects
 from that population; a recorded draw selects rows reproducibly; an
-`OceanTACODataset` renders those rows into model-facing samples. This notebook
-uses a local pre-publication artifact selected explicitly through environment
-variables. Before publication, the same directory must be uploaded unchanged
-with its catalog identity and checksums."""),
+`OceanTACODataset` renders those rows into model-facing samples. Each stage
+narrows the one before it, and each records what it selected, so a batch can be
+traced back to the released population it came from."""),
     md("""## 1. Setup
 
 Nothing here is configured. `CatalogConfig()` carries a pinned catalog
@@ -425,10 +438,14 @@ print("Closed opened datasets.")
 write("ml_configuration_cookbook.ipynb", [
     md("""# ML configuration cookbook
 
-Each recipe states its expected tensor structure, empty-data behaviour, and why the
-renderer/collator is appropriate. All examples begin with an explicit local
-artifact and catalog identity; replace those environment paths with the
-published snapshot directory after release."""),
+A renderer decides what shape a source becomes, and that choice is not free: it
+determines whether samples can be stacked into a batch, what happens when a
+source is absent for a position and date, and how much of the native resolution
+survives. Each recipe below states the tensor structure it produces, what it
+does with empty data, and why its renderer and collator fit that structure.
+Every recipe runs against the same pinned catalog revision and the same
+published evaluation QuerySet loaded in the setup cells, so the recipes differ
+only in their rendering configuration."""),
     code(SETUP), code(LOAD),
     md("## Fixed grids and multimodal fusion"),
     code("""
@@ -489,15 +506,26 @@ from ocean_taco.torch import OceanTACODataset
 recipe_draw = draw_queryset(queryset, requested_row_count=1, seed=19, record_path=DRAW_DIR / "cookbook-draw.json")
 recipe_dataset = OceanTACODataset(queries=recipe_draw, sources={"l4_sst": Resample((64, 64), .5), "l3_swot": Resample((64, 64), .5)}, catalog_config=config)
 recipe_sample = recipe_dataset[0]
+
+def show_grid(axis, record, title):
+    # Draw a rendered source, or state its absence rather than inventing pixels.
+    data = np.asarray(record["data"])
+    if data.shape[0] == 0:
+        axis.text(.5, .5, "structurally absent for\\nthis position and date", ha="center", va="center", transform=axis.transAxes)
+        axis.set(title=f"{title}: shape {data.shape}", xticks=[], yticks=[])
+        return
+    image = axis.imshow(data[0], origin="lower", cmap="turbo", aspect="auto")
+    axis.set(title=f"{title}: shape {data.shape}", xlabel="x pixel", ylabel="y pixel")
+    axis.figure.colorbar(image, ax=axis, shrink=.8)
+
 fig, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
 for axis, token in zip(axes, ("l4_sst", "l3_swot")):
-    image = np.asarray(recipe_sample[token]["data"])[0]
-    im = axis.imshow(image, origin="lower", cmap="turbo", aspect="auto")
-    axis.set(title=f"{token}: fixed 64×64 grid", xlabel="x pixel", ylabel="y pixel")
-    fig.colorbar(im, ax=axis, shrink=.8)
+    show_grid(axis, recipe_sample[token], token)
 from IPython.display import display
 display_figure(fig)
-print("A fixed renderer gives both modalities the same model-facing grid while keeping masks separately.")
+for token in ("l4_sst", "l3_swot"):
+    print(token, "data", np.asarray(recipe_sample[token]["data"]).shape, "valid_mask", np.asarray(recipe_sample[token]["valid_mask"]).shape)
+print("A source with no asset for this position and date renders with a leading zero dimension; the batch layout is unchanged.")
 """),
     code("""
 import matplotlib.pyplot as plt
@@ -543,19 +571,18 @@ print("The timeline represents the QueryFilter relation used above, not an infer
     code("""
 import matplotlib.pyplot as plt
 from ocean_taco.render import Native
-native_dataset = OceanTACODataset(queries=recipe_draw, sources={"l4_sst": Native()}, catalog_config=config)
-native_record = native_dataset[0]["l4_sst"]
-native_image = np.asarray(native_record["data"])[0]
-fixed_image = np.asarray(recipe_sample["l4_sst"]["data"])[0]
+native_dataset = OceanTACODataset(queries=recipe_draw, sources={"l3_swot": Native()}, catalog_config=config)
+native_record = native_dataset[0]["l3_swot"]
+native_data = np.asarray(native_record["data"])
+fixed_data = np.asarray(recipe_sample["l3_swot"]["data"])
 fig, axes = plt.subplots(1, 3, figsize=(14, 4), constrained_layout=True)
-for axis, image, title in zip(axes[:2], (native_image, fixed_image), (f"Native grid: {native_image.shape}", f"Resample grid: {fixed_image.shape}")):
-    im = axis.imshow(image, origin="lower", cmap="turbo", aspect="auto")
-    axis.set(title=title, xlabel="x pixel", ylabel="y pixel")
-    fig.colorbar(im, ax=axis, shrink=.8)
+show_grid(axes[0], native_record, "Native")
+show_grid(axes[1], recipe_sample["l3_swot"], "Resample (64, 64)")
 axes[2].imshow(np.asarray(native_record["valid_mask"])[0], origin="lower", cmap="viridis", vmin=0, vmax=1, aspect="auto")
 axes[2].set(title="Native-grid valid-data mask", xlabel="x pixel", ylabel="y pixel")
 display_figure(fig)
-print("The same retrieved SST patch is shown at its source-native resolution and after the recipe's fixed resampling.")
+print(f"native shape={native_data.shape}; resampled shape={fixed_data.shape}")
+print("Native keeps whatever the source stored, so shapes vary between rows; Resample fixes them at the cost of interpolation.")
 """),
     code("""
 import matplotlib.pyplot as plt

@@ -29,6 +29,9 @@ exclude_patterns = [
     "_build",
     "Thumbs.db",
     ".DS_Store",
+    # Working documents for the tutorial rewrite, kept beside the notebooks they
+    # describe rather than published as pages.
+    "tutorials/*-plan.md",
 ]
 
 # MyST settings

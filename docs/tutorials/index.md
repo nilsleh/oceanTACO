@@ -29,12 +29,13 @@ to set this is the volume, not the size of any one draw.
 `hf_hub_download` preserves the repository layout, which means a fetched
 granule lands at
 `$HF_HOME/hub/datasets--nilsleh--OceanTACO/snapshots/<revision>/DATA/<date>/<region>/`.
-That directory has the same `COLLECTION.json` / `DATA/` / `METADATA/` shape as
-a full local copy of the catalog, so **a populated snapshot directory is itself
-a valid `taco_path`**. Remote access and a local catalog are not two
-mechanisms; they are the same layout at different levels of completeness, which
-is why OceanTACO decides per catalog row whether an asset is local rather than
-reading it from configuration.
+Loading a remote catalog also fetches `COLLECTION.json` and `METADATA/`, about
+0.7 MB, so the snapshot has the same shape as a full local copy and **a
+populated snapshot directory is itself a valid `taco_path`** for the granules
+it contains. Remote access and a local catalog are not two mechanisms; they are
+the same layout at different levels of completeness, which is why OceanTACO
+decides per catalog row whether an asset is local rather than reading it from
+configuration.
 
 To work against a full local copy instead, pass
 `CatalogConfig(taco_path="/path/to/OceanTACO")` and nothing is downloaded.
