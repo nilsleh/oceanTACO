@@ -1,9 +1,10 @@
 """Regression coverage for the loader-redesign Phase 0 fixes."""
 
+from datetime import UTC
+
 import torch
 
 from ocean_taco.geobox import TimeRange
-
 from ocean_taco.torch.dataset import _pad_points, _stack_fixed_grid
 from ocean_taco.torch.sampler import ShapeBucketSampler
 
@@ -227,14 +228,14 @@ def test_midday_stamped_daily_sources_survive_a_single_day_request():
     12:00 label against it as an instant drops the source and reports it as
     unavailable -- indistinguishable from data that is genuinely absent.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from ocean_taco.geobox import TimeRange
     from ocean_taco.retrieve import _select_time_range
 
     interval = TimeRange(
-        start=datetime(2025, 5, 15, tzinfo=timezone.utc),
-        end=datetime(2025, 5, 15, tzinfo=timezone.utc),
+        start=datetime(2025, 5, 15, tzinfo=UTC),
+        end=datetime(2025, 5, 15, tzinfo=UTC),
     )
     for token in ("glorys_ssh", "glorys_uo", "glorys_vo", "l4_sss"):
         selected = _select_time_range(_daily_labelled(12), interval, token)
@@ -243,14 +244,14 @@ def test_midday_stamped_daily_sources_survive_a_single_day_request():
 
 def test_instant_sources_still_compare_against_the_exact_timestamp():
     """The daily-label widening must not loosen selection for instant sources."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from ocean_taco.geobox import TimeRange
     from ocean_taco.retrieve import _select_time_range
 
     interval = TimeRange(
-        start=datetime(2025, 5, 15, tzinfo=timezone.utc),
-        end=datetime(2025, 5, 15, tzinfo=timezone.utc),
+        start=datetime(2025, 5, 15, tzinfo=UTC),
+        end=datetime(2025, 5, 15, tzinfo=UTC),
     )
     assert _select_time_range(_daily_labelled(12), interval, "l4_sst").sizes["time"] == 0
     assert _select_time_range(_daily_labelled(0), interval, "l4_sst").sizes["time"] == 1
@@ -263,15 +264,15 @@ def test_context_window_keeps_a_midday_label_for_a_single_day_patch():
     `_select_time_range` still leaves `VectorPair` reporting GLORYS velocity as
     structurally absent.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from ocean_taco.registry import get_modality
     from ocean_taco.torch.dataset import OceanTACODataset
 
     class _Spec:
         context = TimeRange(
-            start=datetime(2025, 5, 15, tzinfo=timezone.utc),
-            end=datetime(2025, 5, 15, tzinfo=timezone.utc),
+            start=datetime(2025, 5, 15, tzinfo=UTC),
+            end=datetime(2025, 5, 15, tzinfo=UTC),
         )
 
     window = OceanTACODataset._context_window
@@ -288,7 +289,7 @@ def test_argo_profiles_survive_a_single_day_context_window():
     surfaced, which is almost never midnight, so comparing the two directly
     excluded every profile and reported the source as unavailable.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     import numpy as np
     import xarray as xr
@@ -313,8 +314,8 @@ def test_argo_profiles_survive_a_single_day_context_window():
     )
     box = GeoBox(-48.0, -46.0, 21.0, 23.0)
     same_day = TimeRange(
-        start=datetime(2025, 4, 23, tzinfo=timezone.utc),
-        end=datetime(2025, 4, 23, tzinfo=timezone.utc),
+        start=datetime(2025, 4, 23, tzinfo=UTC),
+        end=datetime(2025, 4, 23, tzinfo=UTC),
     )
     rendered = Points(variable="TEMP", pres_range=(0, 10)).render(
         dataset, box, time=same_day, ocean_mask=None
@@ -322,8 +323,8 @@ def test_argo_profiles_survive_a_single_day_context_window():
     assert np.asarray(rendered["data"]).size == count
 
     earlier_day = TimeRange(
-        start=datetime(2025, 4, 22, tzinfo=timezone.utc),
-        end=datetime(2025, 4, 22, tzinfo=timezone.utc),
+        start=datetime(2025, 4, 22, tzinfo=UTC),
+        end=datetime(2025, 4, 22, tzinfo=UTC),
     )
     excluded = Points(variable="TEMP", pres_range=(0, 10)).render(
         dataset, box, time=earlier_day, ocean_mask=None
