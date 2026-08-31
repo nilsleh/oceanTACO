@@ -58,6 +58,45 @@ class CatalogConfig:
         }
 
 
+#: Catalog metadata that makes a directory self-describing to ``tacoreader``.
+#: Small (about 0.7 MB in total) and fetched alongside the first remote read,
+#: so that a populated snapshot directory is itself a valid ``taco_path``.
+CATALOG_METADATA_FILES: tuple[str, ...] = (
+    "COLLECTION.json",
+    "METADATA/level0.parquet",
+    "METADATA/level1.parquet",
+    "METADATA/level2.parquet",
+)
+
+
+def materialise_catalog_metadata(config: CatalogConfig) -> Path:
+    """Download the catalog's metadata files and return their snapshot directory.
+
+    ``hf_hub_download`` preserves the repository layout, so fetching these four
+    files leaves the same ``COLLECTION.json`` / ``DATA/`` / ``METADATA/`` shape
+    a full local catalog has.  Granules fetched later land in the same tree,
+    which is why remote access and a local copy are one layout at different
+    levels of completeness rather than two mechanisms.
+    """
+    from huggingface_hub import hf_hub_download
+
+    root: Path | None = None
+    for filename in CATALOG_METADATA_FILES:
+        path = Path(
+            hf_hub_download(
+                repo_id=config.repo_id,
+                filename=filename,
+                revision=config.revision,
+                repo_type="dataset",
+                cache_dir=config.cache_dir,
+            )
+        )
+        if filename == "COLLECTION.json":
+            root = path.parent
+    assert root is not None
+    return root
+
+
 def load_catalog(config: CatalogConfig):
     """Load the configured TACO catalog without importing optional HF tooling eagerly."""
     try:
@@ -69,4 +108,11 @@ def load_catalog(config: CatalogConfig):
     # releases already return the pandas-compatible catalog by default.
     if hasattr(tacoreader, "use"):
         tacoreader.use("pandas")
+    if config.taco_path is not None:
+        return tacoreader.load(str(config.taco_path))
+    # Materialise the metadata so the snapshot directory is a complete, valid
+    # taco_path, but keep loading from the URL: reading the catalog from the
+    # snapshot would make tacoreader emit local paths for granules that have
+    # not been downloaded yet, and retrieval would fail instead of fetching.
+    materialise_catalog_metadata(config)
     return tacoreader.load(config.resolved_catalog_url)
