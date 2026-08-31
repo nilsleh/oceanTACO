@@ -19,6 +19,7 @@ from math import isfinite
 from pathlib import Path
 from typing import Any
 
+from .catalog import CORE_DATASET_REPO_ID, CORE_DATASET_REVISION
 from .geobox import PatchSize, utc_isoformat
 
 SCHEMA_VERSION = "queryset/v1"
@@ -609,6 +610,44 @@ class QuerySet:
             coverage=tables["coverage"],
             assets=tables["assets"],
         )
+
+    @classmethod
+    def from_hub(
+        cls,
+        patch_km: int = 256,
+        kind: str = "eval",
+        *,
+        repo_id: str = CORE_DATASET_REPO_ID,
+        revision: str = CORE_DATASET_REVISION,
+    ) -> QuerySet:
+        """Read a published QuerySet from the Hub, downloading it if needed.
+
+        This is a locator only: the set is materialised into the standard Hub
+        cache and handed to :meth:`read`, which verifies every table against
+        the header checksums exactly as it does for a local directory.
+
+        :param patch_km: Published patch size in kilometres.
+        :param kind: Published split, ``"eval"`` or ``"training"``.
+        :param repo_id: Dataset repository holding the ``querysets/`` tree.
+        :param revision: Pinned catalog revision to read the set from.
+        """
+        # Deferred so that a local-only workflow never needs the Hub client,
+        # matching how ``load_catalog`` defers its ``tacoreader`` import.
+        from huggingface_hub import snapshot_download
+
+        name = f"{patch_km}-{kind}"
+        root = snapshot_download(
+            repo_id=repo_id,
+            revision=revision,
+            repo_type="dataset",
+            allow_patterns=f"querysets/{name}/*",
+        )
+        directory = Path(root) / "querysets" / name
+        if not directory.is_dir():
+            raise FileNotFoundError(
+                f"Revision {revision[:12]} of {repo_id} publishes no QuerySet {name!r}."
+            )
+        return cls.read(directory)
 
 
 @dataclass(frozen=True, slots=True)

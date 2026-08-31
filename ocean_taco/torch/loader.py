@@ -18,7 +18,6 @@ from ..retrieve import (
     plan_multisource_assets,
 )
 
-
 _LIVE_CORE_LOADERS: weakref.WeakSet[CoreSourceLoader] = weakref.WeakSet()
 _FORK_GUARD_REGISTERED = False
 
@@ -66,8 +65,16 @@ class PlannedSourceLoader:
         self._backend = None
         self._owner_pid = os.getpid()
 
-    def _backend_for_process(self) -> LocalCacheBackend:
+    def _backend_for_process(self) -> LocalCacheBackend | None:
+        """Return this process's cache backend, or ``None`` when unconfigured.
+
+        ``cache_dir`` is an optional override.  Without it, remote assets are
+        cached by ``hf_hub_download`` and local assets are opened in place, so
+        there is nothing for a second cache layer to do.
+        """
         self._reset_for_process()
+        if self.config.cache_dir is None:
+            return None
         if self._backend is None:
             self._backend = LocalCacheBackend(
                 self.config.cache_dir, revision=self.config.revision
@@ -110,10 +117,6 @@ class CoreSourceLoader:
     """
 
     def __init__(self, config: CatalogConfig) -> None:
-        if config.cache_dir is None:
-            raise ValueError(
-                "CoreSourceLoader requires CatalogConfig(cache_dir=...) for released Mode-1 access."
-            )
         self.config = config
         self._catalog: Any | None = None
         self._backend: LocalCacheBackend | None = None
@@ -150,8 +153,16 @@ class CoreSourceLoader:
             self._catalog = load_hf_dataset(self.config)
         return self._catalog
 
-    def _backend_for_process(self) -> LocalCacheBackend:
+    def _backend_for_process(self) -> LocalCacheBackend | None:
+        """Return this process's cache backend, or ``None`` when unconfigured.
+
+        ``cache_dir`` is an optional override.  Without it, remote assets are
+        cached by ``hf_hub_download`` and local assets are opened in place, so
+        there is nothing for a second cache layer to do.
+        """
         self._reset_for_process()
+        if self.config.cache_dir is None:
+            return None
         if self._backend is None:
             self._backend = LocalCacheBackend(
                 self.config.cache_dir, revision=self.config.revision

@@ -135,7 +135,7 @@ class OceanTACODataset(Dataset):
         if source_loader is None:
             if catalog_config is None:
                 raise ValueError(
-                    "Provide source_loader or CatalogConfig(cache_dir=...) for the shipped CoreSourceLoader."
+                    "Provide source_loader or catalog_config for the shipped CoreSourceLoader."
                 )
             source_loader = CoreSourceLoader(catalog_config)
         self.source_loader = source_loader

@@ -79,6 +79,15 @@ class LocalCacheBackend:
             handle.close()
         self._handles.clear()
 
+    def open_path(self, path: Path | str):
+        """Open an already-materialised asset through this worker's read LRU.
+
+        ``hf_hub_download`` performs its own atomic, revision-qualified caching,
+        so a Hub asset is already immutable on disk and must not be copied into
+        a second cache.  Only the fork-safe handle reuse is still wanted.
+        """
+        return self._open_cached(Path(path))
+
     def open_or_fetch(self, date: str, tile: str, filename: str, fetch: Callable[[], bytes]):
         """Open a valid cache hit or atomically commit the fetched bytes first."""
         import xarray as xr

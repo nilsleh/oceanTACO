@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import io
 import os
-import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -154,51 +152,62 @@ def _local_path(value: str) -> str:
     return value
 
 
+def _hub_relative_path(location: str, config: CatalogConfig) -> str:
+    """Return the repo-relative path of a Hub asset URL built by this library.
+
+    ``CatalogConfig.resolved_catalog_url`` composes the very prefix stripped
+    here, so the remainder is exactly ``hf_hub_download``'s ``filename`` and no
+    path mapping is required.
+    """
+    prefix = f"https://huggingface.co/datasets/{config.repo_id}/resolve/{config.revision}/"
+    if not location.startswith(prefix):
+        raise ValueError(
+            "Remote retrieval addresses the pinned Hub dataset only; "
+            f"cannot resolve {location!r} against {prefix!r}."
+        )
+    return location[len(prefix) :]
+
+
+def _open_remote(location: str, config: CatalogConfig, cache: LocalCacheBackend | None):
+    """Download one Hub asset and open it, reusing the Hub's own cache.
+
+    ``hf_hub_download`` caches atomically under ``HF_HOME`` and keys on the
+    revision, so no second copy is made here; ``cache`` contributes only its
+    fork-safe read-handle LRU when one is configured.
+    """
+    import xarray as xr
+    from huggingface_hub import hf_hub_download
+
+    path = hf_hub_download(
+        repo_id=config.repo_id,
+        filename=_hub_relative_path(location, config),
+        revision=config.revision,
+        repo_type="dataset",
+        cache_dir=config.cache_dir,
+    )
+    if cache is not None:
+        return cache.open_path(path)
+    return xr.open_dataset(path, engine="h5netcdf")
+
+
 def _download_dataset(row, config: CatalogConfig, cache: LocalCacheBackend | None, when: str, filename: str):
-    import requests
     import xarray as xr
 
     url = _url_from_row(row)
 
     if _is_local_location(url):
         # A local asset is already immutable on disk.  Routing it through the
-        # fetch cache would copy files into a cache of files, and routing it
-        # through ``requests`` raises MissingSchema on a path with no scheme.
+        # fetch cache would copy files into a cache of files.
         path = _local_path(url)
         if not os.path.exists(path):
             raise FileNotFoundError(f"Catalog references a local asset that does not exist: {path}")
         return xr.open_dataset(path, engine="h5netcdf")
 
-    def fetch() -> bytes:
-        error: Exception | None = None
-        for attempt in range(config.retries + 1):
-            try:
-                response = requests.get(url, timeout=config.timeout_seconds, headers={"User-Agent": "ocean-taco/0.1"})
-                response.raise_for_status()
-                return response.content
-            except requests.RequestException as exc:
-                error = exc
-                if attempt < config.retries:
-                    time.sleep(min(0.25 * (2**attempt), 2.0))
-        assert error is not None
-        raise error
-
-    if cache is not None:
-        return cache.open_or_fetch(when, _tile_from_row(row), filename, fetch)
-    return xr.open_dataset(io.BytesIO(fetch()), engine="h5netcdf")
+    return _open_remote(url, config, cache)
 
 
-
-def _download_location(
-    location: str,
-    tile: str,
-    config: CatalogConfig,
-    cache: LocalCacheBackend | None,
-    when: str,
-    filename: str,
-):
-    """Open a resolved local path or HTTP location without a catalog object."""
-    import requests
+def _download_location(location: str, config: CatalogConfig, cache: LocalCacheBackend | None):
+    """Open a resolved local path or pinned Hub location without a catalog object."""
     import xarray as xr
 
     if _is_local_location(location):
@@ -207,27 +216,8 @@ def _download_location(
             raise FileNotFoundError(f"Catalog references a local asset that does not exist: {path}")
         return xr.open_dataset(path, engine="h5netcdf")
 
-    def fetch() -> bytes:
-        error: Exception | None = None
-        for attempt in range(config.retries + 1):
-            try:
-                response = requests.get(
-                    location,
-                    timeout=config.timeout_seconds,
-                    headers={"User-Agent": "ocean-taco/0.1"},
-                )
-                response.raise_for_status()
-                return response.content
-            except requests.RequestException as exc:
-                error = exc
-                if attempt < config.retries:
-                    time.sleep(min(0.25 * (2**attempt), 2.0))
-        assert error is not None
-        raise error
+    return _open_remote(location, config, cache)
 
-    if cache is not None:
-        return cache.open_or_fetch(when, tile, filename, fetch)
-    return xr.open_dataset(io.BytesIO(fetch()), engine="h5netcdf")
 
 def load_tile_nc(
     catalog,
@@ -565,11 +555,7 @@ def _load_planned_bbox_nc(
     backend: LocalCacheBackend | None,
 ):
     """Fetch and render-ready merge of catalog-free planned asset locations."""
-    filename = _filename(token)
-    datasets = [
-        _download_location(asset.location, asset.tile, config, backend, when, filename)
-        for asset in assets
-    ]
+    datasets = [_download_location(asset.location, config, backend) for asset in assets]
     if not datasets:
         return None
     if token == "l3_swot":
