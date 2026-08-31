@@ -13,7 +13,7 @@ from torch.utils.data import Dataset
 from ..catalog import CatalogConfig
 from ..geobox import PatchSize, PatchSpec
 from ..manifest import QuerySet
-from ..registry import get_modality
+from ..registry import ModalitySpec, get_modality
 from ..render import Native, Points, Resample, VectorPair, canonicalise_dense
 from ..sampling import QueryDraw, load_released_ocean_mask, replay_experiment
 from .loader import CoreSourceLoader
@@ -199,10 +199,22 @@ class OceanTACODataset(Dataset):
         return spec
 
     @staticmethod
-    def _context_window(dense, spec: PatchSpec):
-        """Limit a canonical dense source to the patch's UTC context window."""
+    def _context_window(dense, spec: PatchSpec, source: ModalitySpec | None = None):
+        """Limit a canonical dense source to the patch's UTC context window.
+
+        A ``daily_label`` timestamp names a day rather than an instant in it,
+        and the products place that label differently: GLORYS and L4 SSS stamp
+        12:00 where L4 SSH and L4 wind stamp 00:00.  A single-day context
+        window is zero-width at midnight, so slicing it against a raw
+        timestamp drops the 12:00 sources entirely and reports them as
+        unavailable.  Widen the window to the whole day for those sources,
+        which is the resolution their label actually carries.
+        """
         start = spec.context.start.replace(tzinfo=None)
         end = spec.context.end.replace(tzinfo=None)
+        if source is not None and source.source_time_kind == "daily_label":
+            start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = end.replace(hour=23, minute=59, second=59, microsecond=999999)
         return dense.sel(time=slice(start, end))
 
     @staticmethod
@@ -252,6 +264,7 @@ class OceanTACODataset(Dataset):
                     self._context_window(
                         canonicalise_dense(raw_value, source, fallback_time=spec.anchor_time),
                         spec,
+                        source,
                     )
                     for raw_value, source in zip(raw_values, sources, strict=True)
                 )

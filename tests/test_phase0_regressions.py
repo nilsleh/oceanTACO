@@ -2,6 +2,8 @@
 
 import torch
 
+from ocean_taco.geobox import TimeRange
+
 from ocean_taco.torch.dataset import _pad_points, _stack_fixed_grid
 from ocean_taco.torch.sampler import ShapeBucketSampler
 
@@ -201,3 +203,78 @@ def test_corrupt_published_coverage_is_rejected(tmp_path):
 
     with pytest.raises(ValueError, match="every published"):
         QuerySet.read(directory)
+
+
+def _daily_labelled(stamp_hour: int):
+    """Build a one-day dense source stamped at a given hour of that day."""
+    import numpy as np
+    import xarray as xr
+
+    return xr.Dataset(
+        {"zos": (("time", "lat", "lon"), np.zeros((1, 2, 2), dtype="float32"))},
+        coords={
+            "time": [np.datetime64(f"2025-05-15T{stamp_hour:02d}:00:00", "ns")],
+            "lat": [0.0, 1.0],
+            "lon": [0.0, 1.0],
+        },
+    )
+
+
+def test_midday_stamped_daily_sources_survive_a_single_day_request():
+    """GLORYS and L4 SSS label a day at 12:00; a midnight request must keep them.
+
+    The request interval for one day is zero-width at midnight, so comparing a
+    12:00 label against it as an instant drops the source and reports it as
+    unavailable -- indistinguishable from data that is genuinely absent.
+    """
+    from datetime import datetime, timezone
+
+    from ocean_taco.geobox import TimeRange
+    from ocean_taco.retrieve import _select_time_range
+
+    interval = TimeRange(
+        start=datetime(2025, 5, 15, tzinfo=timezone.utc),
+        end=datetime(2025, 5, 15, tzinfo=timezone.utc),
+    )
+    for token in ("glorys_ssh", "glorys_uo", "glorys_vo", "l4_sss"):
+        selected = _select_time_range(_daily_labelled(12), interval, token)
+        assert selected.sizes["time"] == 1, f"{token} dropped its midday label"
+
+
+def test_instant_sources_still_compare_against_the_exact_timestamp():
+    """The daily-label widening must not loosen selection for instant sources."""
+    from datetime import datetime, timezone
+
+    from ocean_taco.geobox import TimeRange
+    from ocean_taco.retrieve import _select_time_range
+
+    interval = TimeRange(
+        start=datetime(2025, 5, 15, tzinfo=timezone.utc),
+        end=datetime(2025, 5, 15, tzinfo=timezone.utc),
+    )
+    assert _select_time_range(_daily_labelled(12), interval, "l4_sst").sizes["time"] == 0
+    assert _select_time_range(_daily_labelled(0), interval, "l4_sst").sizes["time"] == 1
+
+
+def test_context_window_keeps_a_midday_label_for_a_single_day_patch():
+    """The dataset's own window applies the same rule as retrieval.
+
+    Retrieval and rendering narrow the time axis separately, so fixing only
+    `_select_time_range` still leaves `VectorPair` reporting GLORYS velocity as
+    structurally absent.
+    """
+    from datetime import datetime, timezone
+
+    from ocean_taco.registry import get_modality
+    from ocean_taco.torch.dataset import OceanTACODataset
+
+    class _Spec:
+        context = TimeRange(
+            start=datetime(2025, 5, 15, tzinfo=timezone.utc),
+            end=datetime(2025, 5, 15, tzinfo=timezone.utc),
+        )
+
+    window = OceanTACODataset._context_window
+    assert window(_daily_labelled(12), _Spec, get_modality("glorys_uo")).sizes["time"] == 1
+    assert window(_daily_labelled(0), _Spec, get_modality("l4_sst")).sizes["time"] == 1
+    assert window(_daily_labelled(12), _Spec, get_modality("l4_sst")).sizes["time"] == 0

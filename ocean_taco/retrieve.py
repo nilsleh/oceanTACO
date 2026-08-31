@@ -444,14 +444,29 @@ def _ensure_time_dimension(dataset):
     return dataset.expand_dims(time=[timestamp])
 
 
-def _select_time_range(dataset, interval: TimeRange):
-    """Select the closed request interval using decoded source timestamps."""
+def _select_time_range(dataset, interval: TimeRange, token: str | None = None):
+    """Select the closed request interval using decoded source timestamps.
+
+    ``daily_label`` sources carry a timestamp that names a day rather than an
+    instant within it, and the products disagree about where in the day to put
+    it: GLORYS and L4 SSS stamp 12:00 while L4 SSH and L4 wind stamp 00:00.
+    Comparing those labels against an instant request silently drops the
+    12:00 sources, because a QuerySet anchor time is midnight and the request
+    interval for a single day is zero-width.  Compare on the calendar day for
+    those sources, which is the resolution the label actually carries.
+    """
     import numpy as np
 
     data = _ensure_time_dimension(dataset)
     times = np.asarray(data["time"].values, dtype="datetime64[ns]")
     start = np.datetime64(interval.start.replace(tzinfo=None), "ns")
     end = np.datetime64(interval.end.replace(tzinfo=None), "ns")
+    if token is not None and get_modality(token).source_time_kind == "daily_label":
+        times, start, end = (
+            times.astype("datetime64[D]"),
+            start.astype("datetime64[D]"),
+            end.astype("datetime64[D]"),
+        )
     return data.isel(time=(times >= start) & (times <= end))
 
 
@@ -480,7 +495,7 @@ def load_multisource_time_series_nc(
             selected
             for dataset in per_day
             if dataset is not None
-            for selected in (_select_time_range(dataset, time),)
+            for selected in (_select_time_range(dataset, time, token),)
             if selected.sizes.get("time", 0) > 0
         ]
         if not available:
@@ -602,7 +617,7 @@ def load_planned_multisource_time_series_nc(
             selected
             for dataset in per_day
             if dataset is not None
-            for selected in (_select_time_range(dataset, time),)
+            for selected in (_select_time_range(dataset, time, token),)
             if selected.sizes.get("time", 0) > 0
         ]
         if not available:
