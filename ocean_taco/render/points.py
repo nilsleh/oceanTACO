@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 import numpy as np
@@ -55,7 +56,14 @@ class Points:
         times = np.asarray([_utc_datetime(str(value)) for value in raw_time])
         valid = np.isfinite(data) & np.isfinite(lat) & np.isfinite(lon) & np.isfinite(pres)
         valid &= (lat >= box.lat_min) & (lat <= box.lat_max) & _point_mask(lon, box)
-        valid &= (times >= time.start) & (times <= time.end)
+        # A profile carries the instant it surfaced, while a context window is
+        # specified in whole days and so ends at midnight of its last day.
+        # Comparing the two directly excludes every profile taken after 00:00,
+        # which for a single-day patch is all of them.
+        window_end = time.end
+        if window_end == window_end.replace(hour=0, minute=0, second=0, microsecond=0):
+            window_end = window_end + timedelta(days=1) - timedelta(microseconds=1)
+        valid &= (times >= time.start) & (times <= window_end)
         point_ocean = None
         point_in_mask_domain = None
         if ocean_mask is not None:

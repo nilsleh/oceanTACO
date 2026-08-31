@@ -278,3 +278,54 @@ def test_context_window_keeps_a_midday_label_for_a_single_day_patch():
     assert window(_daily_labelled(12), _Spec, get_modality("glorys_uo")).sizes["time"] == 1
     assert window(_daily_labelled(0), _Spec, get_modality("l4_sst")).sizes["time"] == 1
     assert window(_daily_labelled(12), _Spec, get_modality("l4_sst")).sizes["time"] == 0
+
+
+def test_argo_profiles_survive_a_single_day_context_window():
+    """A profile's surfacing time must not be compared against midnight alone.
+
+    A context window is specified in whole days, so a single-day window runs
+    from 00:00 to 00:00 of the same date. Argo records the instant a float
+    surfaced, which is almost never midnight, so comparing the two directly
+    excluded every profile and reported the source as unavailable.
+    """
+    from datetime import datetime, timezone
+
+    import numpy as np
+    import xarray as xr
+
+    from ocean_taco.geobox import GeoBox
+    from ocean_taco.render import Points
+
+    count = 3
+    dataset = xr.Dataset(
+        {
+            "TEMP": ("N_POINTS", np.full(count, 12.0, dtype="float32")),
+            "PRES": ("N_POINTS", np.full(count, 5.0, dtype="float32")),
+            "PLATFORM_NUMBER": ("N_POINTS", np.array(["1"] * count)),
+            "CYCLE_NUMBER": ("N_POINTS", np.arange(count)),
+            "lat": ("N_POINTS", np.full(count, 21.9, dtype="float32")),
+            "lon": ("N_POINTS", np.full(count, -47.1, dtype="float32")),
+            "time": (
+                "N_POINTS",
+                np.array(["2025-04-23T16:30:43"] * count, dtype="datetime64[ns]"),
+            ),
+        }
+    )
+    box = GeoBox(-48.0, -46.0, 21.0, 23.0)
+    same_day = TimeRange(
+        start=datetime(2025, 4, 23, tzinfo=timezone.utc),
+        end=datetime(2025, 4, 23, tzinfo=timezone.utc),
+    )
+    rendered = Points(variable="TEMP", pres_range=(0, 10)).render(
+        dataset, box, time=same_day, ocean_mask=None
+    )
+    assert np.asarray(rendered["data"]).size == count
+
+    earlier_day = TimeRange(
+        start=datetime(2025, 4, 22, tzinfo=timezone.utc),
+        end=datetime(2025, 4, 22, tzinfo=timezone.utc),
+    )
+    excluded = Points(variable="TEMP", pres_range=(0, 10)).render(
+        dataset, box, time=earlier_day, ocean_mask=None
+    )
+    assert np.asarray(excluded["data"]).size == 0
