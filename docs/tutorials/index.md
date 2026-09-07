@@ -23,8 +23,8 @@ enough to be worth redirecting:
 export HF_HOME=/path/with/space/hf-home
 ```
 
-A tutorial run touches only a few granules, so the cost is modest; the reason
-to set this is the volume, not the size of any one draw.
+A tutorial run touches only a few granules, so the cost is modest. The reason
+to set this is the size of the volume rather than the size of any one draw.
 
 `hf_hub_download` preserves the repository layout, which means a fetched
 granule lands at
@@ -32,13 +32,23 @@ granule lands at
 Loading a remote catalog also fetches `COLLECTION.json` and `METADATA/`, about
 0.7 MB, so the snapshot has the same shape as a full local copy and **a
 populated snapshot directory is itself a valid `taco_path`** for the granules
-it contains. Remote access and a local catalog are not two mechanisms; they are
-the same layout at different levels of completeness, which is why OceanTACO
-decides per catalog row whether an asset is local rather than reading it from
+it contains. A remote snapshot and a full local copy share one layout at
+different levels of completeness, which is why OceanTACO works out per catalog
+row whether an asset is already local instead of reading that from
 configuration.
 
-To work against a full local copy instead, pass
-`CatalogConfig(taco_path="/path/to/OceanTACO")` and nothing is downloaded.
+## What each notebook covers
+
+Read them in the order below. The first is the entry point and links out to the
+other three.
+
+| Notebook | Role |
+|---|---|
+| `ml_dataset` | Overview and entry point: the four stages from a published QuerySet to a rendered sample. |
+| `data_retrieval_workflows` | QuerySet and filter deep-dive: selection, coverage evidence, and the lower-level retrieval API. |
+| `spatio_temporal_query_generation` | ML use cases (forecasting, midpoint retrieval, super-resolution, multi-source) and the working training loader. |
+| `ml_configuration_cookbook` | Renderer reference, organised by renderer. |
+| `plot_hurricane_milton*` | Paper-figure reproductions. |
 
 ## The Hurricane Milton notebooks
 
@@ -50,9 +60,9 @@ the repository's `ocean_taco.viz` helpers, which `[tutorials]` installs.
 :caption: Tutorials
 
 ml_dataset
-ml_configuration_cookbook
-spatio_temporal_query_generation
 data_retrieval_workflows
+spatio_temporal_query_generation
+ml_configuration_cookbook
 plot_hurricane_milton
 plot_hurricane_milton_cross_product
 ```
@@ -60,7 +70,7 @@ plot_hurricane_milton_cross_product
 ## Editing these notebooks
 
 The `.ipynb` files are generated. `scripts/dev/restore_tutorial_notebooks.py`
-is the source of truth for their narrative and code; edits made directly to a
-notebook are reverted the next time it runs. Regenerate with that script, then
+is the source of truth for their narrative and code, and edits made directly to
+a notebook are reverted the next time it runs. Regenerate with that script, then
 execute with `scripts/dev/execute_tutorial_notebooks.py`, which records partial
 output and a traceback into notebook metadata when a cell fails.

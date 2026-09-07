@@ -2,7 +2,7 @@
 
 The command-line entry point intentionally reads only a QuerySet's published
 header and factored Parquet tables.  It does not stage assets or render any
-ocean data; the maps are a diagnostic for the population and its stored
+ocean data. The maps are a diagnostic for the published set and its stored
 coverage evidence.
 
 Run it from a repository checkout with the optional plotting dependencies::
@@ -23,7 +23,7 @@ from typing import Any
 
 from ..filter import CoverageRequirement, QueryFilter, select_queryset
 from ..geobox import GeoBox, PatchSize, _utc_datetime, utc_isoformat
-from ..manifest import QuerySet
+from ..queryset import QuerySet
 from ..retrieve import _REGION_BOUNDS as CORE_REGION_BOUNDS
 
 
@@ -81,7 +81,7 @@ def select_common_dates(
 
     Three shared dates are required even when explicit dates are supplied: the
     command is a three-date diagnostic by default, and this catches a train /
-    evaluation population mismatch before producing a partial report.
+    evaluation set mismatch before producing a partial report.
     """
     common = tuple(sorted(set(training.dates).intersection(evaluation.dates)))
     if len(common) < 3:

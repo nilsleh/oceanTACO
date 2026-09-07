@@ -18,7 +18,7 @@ from ocean_taco.geobox import (
     PatchSpec,
     TimeRange,
 )
-from ocean_taco.manifest import QuerySet, content_sha256, position_id
+from ocean_taco.queryset import QuerySet, content_sha256, position_id
 from ocean_taco.render import (
     Native,
     Points,

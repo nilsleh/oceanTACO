@@ -13,7 +13,7 @@ Three stages, each independently runnable via ``--stage``:
 ``assemble``
     Reads the shards, calls :func:`ocean_taco.sampling.publish.build_queryset`
     for each set with a pure-lookup coverage callback, and publishes with
-    :meth:`ocean_taco.manifest.QuerySet.write`.
+    :meth:`ocean_taco.queryset.QuerySet.write`.
 
 Dates whose source assets are incomplete are retained with null coverage;
 they are never silently dropped.
@@ -57,7 +57,7 @@ from queryset_build import (  # noqa: E402
 
 from ocean_taco.catalog import CatalogConfig, load_catalog  # noqa: E402
 from ocean_taco.geobox import PatchSize, utc_isoformat  # noqa: E402
-from ocean_taco.manifest import QuerySet, content_sha256  # noqa: E402
+from ocean_taco.queryset import QuerySet, content_sha256  # noqa: E402
 from ocean_taco.registry import get_modality, registry_sha256  # noqa: E402
 from ocean_taco.retrieve import REGION_BIT, REGIONS, _clean_swot, _url_from_row  # noqa: E402
 from ocean_taco.sampling.coverage import unavailable_dense_coverage  # noqa: E402

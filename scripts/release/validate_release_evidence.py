@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from ocean_taco.catalog import CORE_DATASET_REVISION
-from ocean_taco.manifest import QuerySet
+from ocean_taco.queryset import QuerySet
 
 REQUIRED_STEPS = (
     "reference_recipe",

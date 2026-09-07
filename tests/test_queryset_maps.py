@@ -10,7 +10,7 @@ pytest.importorskip("pyarrow")
 
 from ocean_taco.filter import QueryFilter, select_queryset
 from ocean_taco.geobox import GeoBox, PatchSize, utc_isoformat
-from ocean_taco.manifest import QuerySet, content_sha256, position_id
+from ocean_taco.queryset import QuerySet, content_sha256, position_id
 from ocean_taco.viz import queryset_maps
 
 

@@ -10,7 +10,7 @@ import pyarrow.parquet as pq
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from ocean_taco.filter import CoverageRequirement, QueryFilter, select_queryset
-from ocean_taco.manifest import QuerySet
+from ocean_taco.queryset import QuerySet
 from ocean_taco.sampling.grids import build_position_grid
 from ocean_taco.sampling.ocean_mask import load_released_ocean_mask
 from ocean_taco.sampling.publish import GRID_SPACING_RATIO

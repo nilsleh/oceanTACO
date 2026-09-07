@@ -16,7 +16,7 @@ _REQUIRED = {
     "ocean_taco/__init__.py",
     "ocean_taco/catalog.py",
     "ocean_taco/geobox.py",
-    "ocean_taco/manifest.py",
+    "ocean_taco/queryset.py",
     "ocean_taco/filter.py",
     "ocean_taco/registry.py",
     "ocean_taco/retrieve.py",

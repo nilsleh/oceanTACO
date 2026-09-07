@@ -8,7 +8,7 @@ from datetime import timedelta
 from typing import Any, Literal
 
 from .geobox import GeoBox, _utc_datetime, utc_isoformat
-from .manifest import QuerySet, content_sha256
+from .queryset import QuerySet, content_sha256
 
 Aggregate = Literal["sum", "mean", "min"]
 
@@ -53,7 +53,7 @@ class CoverageRequirement:
 
 @dataclass(frozen=True, slots=True)
 class QueryFilter:
-    """A serialisable selection over a published population.
+    """A serialisable selection over a published QuerySet.
 
     The filter contains no source callback and performs neither source I/O nor
     re-measurement.  Context offsets and lead only restrict which anchors are
@@ -284,7 +284,7 @@ class SelectedPairs:
     def resolve_rank(self, rank: int) -> tuple[int, int]:
         """Resolve one selected canonical ordinal without materialising a product."""
         if not 0 <= rank < self.count:
-            raise IndexError("Selected pair rank is outside the population.")
+            raise IndexError("Selected pair rank is outside the selection.")
         if self.is_cartesian:
             width = len(self._dates)
             return self._positions[rank // width], self._dates[rank % width]
@@ -301,7 +301,7 @@ class SelectedPairs:
 def select_queryset(
     queryset: QuerySet, query_filter: QueryFilter | None = None
 ) -> SelectedPairs:
-    """Create a local-only selection over one published population."""
+    """Create a local-only selection over one published QuerySet."""
     return SelectedPairs(queryset, query_filter or QueryFilter())
 
 

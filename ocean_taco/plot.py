@@ -15,12 +15,27 @@ def _array(value: Any) -> np.ndarray:
     return np.asarray(value)
 
 
-def plot_ocean_sample(sample: dict[str, Any], token: str, *, time_index: int = 0, component: int = 0, ax=None):
+def plot_ocean_sample(
+    sample: dict[str, Any],
+    token: str,
+    *,
+    time_index: int = 0,
+    component: int = 0,
+    ax=None,
+    cmap: str | None = None,
+    interpolation: str | None = None,
+    **imshow_kwargs: Any,
+):
     """Plot one grid or ragged-point source record from a rendered sample.
 
     Matplotlib is imported only when this optional helper is called.  Vector
-    pairs are plotted by component (0=eastward, 1=northward); ragged point
+    pairs are plotted by component (0=eastward, 1=northward), and ragged point
     sources are plotted at their geographical locations.
+
+    ``cmap`` and ``interpolation`` are forwarded to the underlying artist, as
+    are any further keyword arguments such as ``vmin`` and ``vmax``.  Leaving
+    them unset keeps matplotlib's own defaults, so existing callers see no
+    change.
     """
     try:
         from matplotlib import pyplot
@@ -34,7 +49,7 @@ def plot_ocean_sample(sample: dict[str, Any], token: str, *, time_index: int = 0
     data = _array(record["data"])
     lat, lon = _array(record["lat"]), _array(record["lon"])
     if "pres" in record:
-        artist = ax.scatter(lon, lat, c=data)
+        artist = ax.scatter(lon, lat, c=data, cmap=cmap, **imshow_kwargs)
         ax.set_xlabel("longitude")
         ax.set_ylabel("latitude")
         return artist
@@ -51,7 +66,15 @@ def plot_ocean_sample(sample: dict[str, Any], token: str, *, time_index: int = 0
     else:
         image = data[time_index]
     extent = (float(lon[0]), float(lon[-1]), float(lat[0]), float(lat[-1])) if lat.size and lon.size else None
-    artist = ax.imshow(image, origin="lower", extent=extent, aspect="auto")
+    artist = ax.imshow(
+        image,
+        origin="lower",
+        extent=extent,
+        aspect="auto",
+        cmap=cmap,
+        interpolation=interpolation,
+        **imshow_kwargs,
+    )
     ax.set_xlabel("longitude")
     ax.set_ylabel("latitude")
     return artist

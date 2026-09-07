@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 
 from ..geobox import KM_PER_DEGREE_LATITUDE, PatchSize
-from ..manifest import position_id
+from ..queryset import position_id
 from .ocean_mask import OceanMaskArtifact
 
 

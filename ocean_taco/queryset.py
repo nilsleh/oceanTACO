@@ -2,7 +2,7 @@
 
 The query-set boundary is deliberately factored.  A set stores one position
 table, one per-position/per-date coverage table, and one asset-identity table;
-it never serialises a rendered sample or a pre-qualified population.
+it never serialises a rendered sample or a pre-qualified set of rows.
 """
 
 from __future__ import annotations
@@ -355,7 +355,7 @@ def _validate_non_negative(
 
 @dataclass(frozen=True, slots=True)
 class QuerySet:
-    """One immutable factored published population.
+    """One immutable factored published set of positions and dates.
 
     ``positions`` and ``coverage`` are always complete: each published
     position has exactly one coverage row for every canonical date.  Coverage

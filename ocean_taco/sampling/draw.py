@@ -13,7 +13,7 @@ import numpy as np
 
 from ..filter import CoverageRequirement, QueryFilter, SelectedPairs, select_queryset
 from ..geobox import GeoBox
-from ..manifest import QuerySet, canonical_json, content_sha256
+from ..queryset import QuerySet, canonical_json, content_sha256
 
 
 def _floyd_ordinals(population_size: int, count: int, seed: int) -> tuple[int, ...]:
@@ -92,7 +92,7 @@ def _write_record(path: Path | str, record: Mapping[str, Any]) -> Path:
 
 @dataclass(frozen=True, slots=True)
 class QueryDraw:
-    """One reproducible uniform draw from a selected QuerySet population."""
+    """One reproducible uniform draw from a selected QuerySet."""
 
     queryset: QuerySet
     rows: tuple[Mapping[str, Any], ...]

@@ -54,7 +54,7 @@ def test_shape_bucket_sampler_uses_epoch():
 
 def _published_queryset(tmp_path, position_count=3, date_count=4):
     """Write a small published QuerySet and return its directory."""
-    from ocean_taco.manifest import (
+    from ocean_taco.queryset import (
         QuerySet,
         _schemas,
         canonical_json,
@@ -151,7 +151,7 @@ def _published_queryset(tmp_path, position_count=3, date_count=4):
 
 def test_published_coverage_reads_without_materialising_rows(tmp_path):
     """Coverage is served from Arrow columns, with identical values and identity."""
-    from ocean_taco.manifest import QuerySet, _ArrowRows
+    from ocean_taco.queryset import QuerySet, _ArrowRows
 
     directory, expected, identifier = _published_queryset(tmp_path)
     queryset = QuerySet.read(directory)
@@ -170,7 +170,7 @@ def test_published_coverage_reads_without_materialising_rows(tmp_path):
 
 def test_published_queryset_round_trips_through_the_columnar_view(tmp_path):
     """Reading and rewriting a published set preserves its content identity."""
-    from ocean_taco.manifest import QuerySet
+    from ocean_taco.queryset import QuerySet
 
     directory, _, identifier = _published_queryset(tmp_path)
     queryset = QuerySet.read(directory)
@@ -184,7 +184,7 @@ def test_corrupt_published_coverage_is_rejected(tmp_path):
     import pyarrow.parquet as pq
     import pytest
 
-    from ocean_taco.manifest import QuerySet, _schemas
+    from ocean_taco.queryset import QuerySet, _schemas
 
     directory, coverage, _ = _published_queryset(tmp_path)
     # Drop one pair, so the table is no longer the complete cartesian product.

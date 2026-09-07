@@ -28,6 +28,37 @@ NOTEBOOKS = [
 ]
 
 
+# Warnings about the machine the docs were built on rather than about the
+# library: an unauthenticated Hub request, and ipywidgets missing from a
+# non-interactive kernel. Both are stderr noise that would otherwise be
+# published as tutorial output. Warnings raised by ocean_taco itself are part
+# of what the tutorials demonstrate and are left in place.
+ENVIRONMENT_NOISE = (
+    "TqdmWarning",
+    "IProgress not found",
+    "unauthenticated requests to the HF Hub",
+)
+
+
+def strip_environment_noise(notebook: nbformat.NotebookNode) -> None:
+    for cell in notebook.cells:
+        if cell.cell_type != "code":
+            continue
+        kept = []
+        for output in cell.get("outputs", []):
+            if output.get("output_type") == "stream" and output.get("name") == "stderr":
+                lines = [
+                    line
+                    for line in output.get("text", "").splitlines(keepends=True)
+                    if not any(marker in line for marker in ENVIRONMENT_NOISE)
+                ]
+                if not "".join(lines).strip():
+                    continue
+                output["text"] = "".join(lines)
+            kept.append(output)
+        cell["outputs"] = kept
+
+
 def error_messages(notebook: nbformat.NotebookNode) -> list[str]:
     return [
         f"{output.ename}: {output.evalue}"
@@ -54,6 +85,7 @@ def execute(path: Path) -> dict[str, object]:
         notebook.metadata["ocean_taco_execution_failure"] = failure
         print(f"EXECUTOR FAILURE {path}\n{failure}", flush=True)
     finally:
+        strip_environment_noise(notebook)
         nbformat.write(notebook, path)
 
     code_cells = [cell for cell in notebook.cells if cell.cell_type == "code"]

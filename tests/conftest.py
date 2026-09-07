@@ -158,7 +158,7 @@ def synthetic_port(tmp_path):
 @pytest.fixture(scope="session")
 def synthetic_queryset():
     """Small valid QuerySet for selection tests without release artifacts."""
-    from ocean_taco.manifest import QuerySet, content_sha256, position_id
+    from ocean_taco.queryset import QuerySet, content_sha256, position_id
 
     dates = ["2024-01-02T00:00:00.000000Z", "2024-01-03T00:00:00.000000Z"]
     grid_id = "synthetic-grid"

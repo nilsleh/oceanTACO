@@ -6,7 +6,7 @@ no builder code participates in computing the expected values.
 import argparse
 import os, random, numpy as np, xarray as xr
 from pathlib import Path
-from ocean_taco.manifest import QuerySet
+from ocean_taco.queryset import QuerySet
 from ocean_taco.registry import get_modality
 from ocean_taco.sampling.ocean_mask import load_released_ocean_mask
 from ocean_taco.sampling.coverage import measure_dense_coverage, measure_argo_profile_count

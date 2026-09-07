@@ -12,7 +12,7 @@ from torch.utils.data import Dataset
 
 from ..catalog import CatalogConfig
 from ..geobox import PatchSize, PatchSpec
-from ..manifest import QuerySet
+from ..queryset import QuerySet
 from ..registry import ModalitySpec, get_modality
 from ..render import Native, Points, Resample, VectorPair, canonicalise_dense
 from ..sampling import QueryDraw, load_released_ocean_mask, replay_experiment
@@ -99,7 +99,8 @@ class OceanTACODataset(Dataset):
                 resolved_draw = replay_experiment(queries, experiment_record)
             else:
                 raise ValueError(
-                    "A published QuerySet is a population, not a sample list; pass a QueryDraw or experiment_record."
+                    "A published QuerySet is the full published set of positions and dates. "
+                    "Pass a QueryDraw or an experiment_record to name specific rows."
                 )
             self.queries = queries
             self.rows = tuple(resolved_draw.rows)

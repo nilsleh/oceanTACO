@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from ..geobox import PatchSize, _utc_datetime, utc_isoformat
-from ..manifest import QuerySet, content_sha256
+from ..queryset import QuerySet, content_sha256
 from .coverage import DenseCoverage, build_coverage_table
 from .grids import build_position_grid, grid_id
 from .ocean_mask import OceanMaskArtifact
@@ -49,7 +49,7 @@ def build_queryset(
     static_counts: Callable[[float, float], Mapping[str, int]],
     region_mask: Callable[[Any], int] | None = None,
 ) -> QuerySet:
-    """Build an unsplit published population with no policy-based rejection.
+    """Build an unsplit published QuerySet with no policy-based rejection.
 
     ``measure_coverage`` and ``static_counts`` are offline builder callbacks.
     Their outputs are facts stored in the Parquet tables, not admission
