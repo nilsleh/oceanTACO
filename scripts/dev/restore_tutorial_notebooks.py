@@ -152,6 +152,68 @@ def geographic_extent(record):
     lon = np.asarray(record["lon"]).ravel()
     lat = np.asarray(record["lat"]).ravel()
     return (float(lon.min()), float(lon.max()), float(lat.min()), float(lat.max()))
+
+def batch_member(batch, token, index):
+    # One sample's worth of a collated batch, in the shape the single-record
+    # helpers above already accept. Collation stacks the grid vectors as
+    # lat (B, H) and lon (B, W), so slicing the leading axis recovers the
+    # record that geographic_extent and the imshow calls expect.
+    stacked = batch[token]
+    record = {key: stacked[key][index] for key in ("data", "valid_mask", "lat", "lon")
+              if key in stacked}
+    for key in ("source_valid", "support_mask", "spatial_padding_mask"):
+        if key in stacked:
+            record[key] = stacked[key][index]
+    return record
+
+def batch_panel_grid(batch, token, columns=4, day=0, title=None, panel_title=None,
+                     figure_width=3.3, panel_height=3.0, show_coastlines=True):
+    # A whole batch drawn as a grid of maps, one panel per batch member. Batch
+    # size, not the caller, sets the number of panels, so a loader that returns
+    # fewer rows than asked for still draws every row it did return.
+    values = np.asarray(batch[token]["data"])
+    count = values.shape[0]
+    rows = int(np.ceil(count / columns))
+    fig, axes = plt.subplots(rows, columns, squeeze=False,
+                             figsize=(figure_width * columns, panel_height * rows),
+                             constrained_layout=True)
+    flat = axes.ravel()
+    limits = color_limits(token)
+    available = batch.get("availability", {}).get(token, [True] * count)
+    drawn = None
+    for index in range(count):
+        axis, record = flat[index], batch_member(batch, token, index)
+        axis.set(xticks=[], yticks=[])
+        axis.set_title(panel_title(batch, index) if panel_title else f"row {index}", fontsize=9)
+        extent = geographic_extent(record)
+        if not available[index] or not np.isfinite(extent).all():
+            # A row whose source has no asset for its date is rendered with no
+            # grid at all, so there is nothing to place on a map. Saying so in
+            # the panel keeps the batch's own geometry, where panel N is row N.
+            axis.text(.5, .5, "no data\\nfor this row", ha="center", va="center",
+                      fontsize=9, color="#777777", transform=axis.transAxes)
+            continue
+        field = np.asarray(record["data"])[day]
+        # Cells the renderer could not fill are left blank rather than drawn as
+        # a value, so a sparse source reads as sparse.
+        shown = np.where(np.asarray(record["valid_mask"])[day], field, np.nan)
+        drawn = axis.imshow(shown, origin="lower", cmap=CMAP, interpolation="nearest",
+                            aspect="auto", extent=extent, **limits)
+        if show_coastlines:
+            add_coastlines(axis)
+    for axis in flat[count:]:
+        axis.axis("off")
+    if drawn is not None:
+        fig.colorbar(drawn, ax=axes.ravel().tolist(), shrink=.6)
+    if title:
+        fig.suptitle(title)
+    return fig
+
+def batch_dates(batch):
+    # The context start date of every member of a collated batch. Collation
+    # keeps the per-sample query objects in a list, so the dates survive
+    # batching and a panel can say which day it is showing.
+    return [f"{spec.context.start:%Y-%m-%d}" for spec in batch["query"]]
 """
 
 
@@ -633,6 +695,11 @@ from ocean_taco.torch import OceanTACODataset
 BOX = GeoBox(-80, -30, 10, 45)
 SOURCE = {"l4_sst": Resample((32, 32), support_threshold=0.5)}
 
+# Every section below draws this many rows and pulls exactly one batch of them,
+# so each use case is judged across eight positions and dates rather than on
+# whichever single row happened to come back first.
+BATCH_SIZE = 8
+
 def offset_rows(rows, start, end):
     # Copy drawn rows and point them at a different span around the same
     # anchor. OceanTACODataset accepts a plain sequence of row mappings.
@@ -644,7 +711,7 @@ def window_of(dataset):
 
 forecast_filter = QueryFilter(box=BOX, relation="forecast", target_lead_days=1,
                               context_start_offset_days=-1, context_end_offset_days=0)
-forecast_draw = draw_queryset(queryset, requested_row_count=4, seed=29,
+forecast_draw = draw_queryset(queryset, requested_row_count=BATCH_SIZE, seed=29,
                               record_path=DRAW_DIR / "forecast-draw.json",
                               query_filter=forecast_filter)
 lead = forecast_filter.target_lead_days
@@ -657,6 +724,51 @@ print(f"context: {window_of(context_set)}")
 print(f"target:  {window_of(target_set)}  (lead {lead} day)")
 print(f"windows disjoint: {target_window.start > context_window.end}")
 print(f"draw record replays: {replay_experiment(queryset, DRAW_DIR / 'forecast-draw.json').rows == forecast_draw.rows}")
+"""),
+    md("""### The batch this query shape produces
+
+Printed offsets say what was asked for. A batch says what came back, so from
+here on every section ends by building a `DataLoader` over its dataset and
+pulling one batch of eight.
+
+Two loader settings matter and both appear in every call below.
+`collate_ocean_samples` is passed as `collate_fn` because the default PyTorch
+collation cannot stack these samples, and `seed_ocean_taco_worker` is passed as
+`worker_init_fn` because worker processes otherwise inherit one seed. §7
+returns to both, along with the third case, batching sources whose shape varies
+between rows.
+
+The context and target batches are drawn side by side. They hold the same
+eight positions one day apart, which is the prediction a forecasting model is
+asked to make."""),
+    code("""
+from torch.utils.data import DataLoader
+from ocean_taco.torch import (ShapeBucketSampler, collate_ocean_samples,
+                              native_pad_collate, seed_ocean_taco_worker)
+
+def one_batch(dataset, batch_size=BATCH_SIZE, collate=collate_ocean_samples):
+    # One batch, built the same way in every section. num_workers stays at 2
+    # because these draws are small and the fetch, not the collation, is what
+    # takes the time.
+    loader = DataLoader(dataset, batch_size=batch_size, num_workers=2,
+                        collate_fn=collate, worker_init_fn=seed_ocean_taco_worker)
+    return next(iter(loader))
+
+context_batch = one_batch(context_set)
+target_batch = one_batch(target_set)
+print(f"context batch: {tuple(context_batch['l4_sst']['data'].shape)}  (batch, days, height, width)")
+print(f"target batch:  {tuple(target_batch['l4_sst']['data'].shape)}")
+print(f"targets available: {target_batch['availability']['l4_sst']}")
+
+def dated(prefix):
+    return lambda batch, index: f"{prefix} {batch_dates(batch)[index]}"
+
+display_figure(batch_panel_grid(context_batch, "l4_sst", panel_title=dated("context"),
+                                title=f"Context: one batch of {BATCH_SIZE} drawn rows, last context day"))
+display_figure(batch_panel_grid(target_batch, "l4_sst", panel_title=dated("target"),
+                                title=f"Target: the same {BATCH_SIZE} positions, {lead} day later"))
+print("Each column pair is one training example. The eight rows span different positions and seasons,")
+print("which is what a draw is for: one batch already covers most of the box and most of the year.")
 """),
     md("""## 2. Midpoint retrieval for assimilation and interpolation
 
@@ -690,7 +802,7 @@ midpoint_filter = QueryFilter(box=BOX, relation="same_time",
 print(f"eligible pairs with a +/-{HALF_WINDOW} day window: {select_queryset(queryset, midpoint_filter).count}")
 print(f"eligible pairs with no window at all:      {select_queryset(queryset, QueryFilter(box=BOX)).count}")
 
-midpoint_draw = draw_queryset(queryset, requested_row_count=4, seed=11,
+midpoint_draw = draw_queryset(queryset, requested_row_count=BATCH_SIZE, seed=11,
                               record_path=DRAW_DIR / "midpoint-draw.json",
                               query_filter=midpoint_filter)
 window_set = OceanTACODataset(queries=midpoint_draw, sources=SOURCE, catalog_config=config)
@@ -719,6 +831,72 @@ axes[1].set_xlabel("days relative to the anchor (dotted line)")
 fig.tight_layout()
 display_figure(fig)
 print("Both shapes come from one draw each. Only the offsets on the target rows differ.")
+"""),
+    md("""### The batch this query shape produces
+
+The schematic above is the intent. The batch is the result, and it differs from
+§1's in one visible way: the context tensor now carries five days per row
+instead of two, because the window spans two days either side of the anchor.
+
+The first figure holds the batch position fixed and steps across the five
+context days, which is the axis this query shape adds. It scales to the chosen
+patch's own range rather than the shared one used elsewhere, because it
+compares days within one patch and the shared range would render five identical
+blocks. The second figure is the target batch, one day per row, each one the
+centre of the window above it, and that one keeps the shared range because it
+does compare patches.
+
+A day inside the window can still arrive empty, and one does below. The window
+reserves a slot for every day it asked for, so the tensor keeps its full time
+axis and the missing day shows up as a labelled panel rather than a shorter
+row. A model consuming this window reads `valid_mask` to tell the two
+apart."""),
+    code("""
+window_batch = one_batch(window_set)
+centre_batch = one_batch(centre_set)
+days = window_batch["l4_sst"]["data"].shape[1]
+print(f"context batch: {tuple(window_batch['l4_sst']['data'].shape)}  ({days} days per row)")
+print(f"target batch:  {tuple(centre_batch['l4_sst']['data'].shape)}  (the middle day alone)")
+
+# One batch member across the whole window, so the axis this section adds is
+# the one the figure varies. The member is the one with the most spatial
+# structure rather than row 0, since a patch of uniform open ocean would show
+# five identical panels whatever happened between them.
+spread = [float(np.nanstd(np.asarray(window_batch["l4_sst"]["data"])[index]))
+          for index in range(window_batch["l4_sst"]["data"].shape[0])]
+member = int(np.nanargmax(spread))
+record = batch_member(window_batch, "l4_sst", member)
+values = np.asarray(record["data"])
+extent = geographic_extent(record)
+
+# This figure compares days within one patch rather than patches against each
+# other, so it scales to that patch's own range. The shared COLOR_RANGE spans
+# every North Atlantic row and would flatten a single patch to one shade.
+low, high = float(np.nanmin(values)), float(np.nanmax(values))
+fig, axes = plt.subplots(1, days, figsize=(3.3 * days, 3.2), constrained_layout=True)
+offsets = range(-HALF_WINDOW, HALF_WINDOW + 1)
+for axis, day, offset in zip(axes, range(days), offsets):
+    axis.set(title=f"anchor {offset:+d} d" if offset else "anchor (target day)", xticks=[], yticks=[])
+    valid = np.asarray(record["valid_mask"])[day]
+    if not valid.any():
+        # A day inside the window with no valid cell at all. The window asked
+        # for it and the tensor reserves its slot, so the row still has five
+        # days and one of them carries nothing.
+        axis.text(.5, .5, "no valid cells\\non this day", ha="center", va="center",
+                  fontsize=9, color="#777777", transform=axis.transAxes)
+        continue
+    drawn = axis.imshow(np.where(valid, values[day], np.nan), origin="lower", cmap=CMAP,
+                        interpolation="nearest", aspect="auto", extent=extent, vmin=low, vmax=high)
+    add_coastlines(axis)
+fig.colorbar(drawn, ax=axes.tolist(), shrink=.7, label="degrees celsius")
+fig.suptitle(f"Row {member} of the batch across its +/-{HALF_WINDOW} day context window, "
+             f"scaled to this patch ({low:.1f} to {high:.1f} degC)")
+display_figure(fig)
+
+display_figure(batch_panel_grid(centre_batch, "l4_sst", panel_title=dated("target"),
+                                title=f"The target day for all {BATCH_SIZE} rows, each at the centre of its own window"))
+print("The window supplies days on both sides of the target, so a model here interpolates in time")
+print("rather than extrapolating forward as it does in section 1.")
 """),
     md("""## 3. Super-resolution: native grids, and a power-of-two rescaling
 
@@ -805,7 +983,15 @@ power-of-two-divisible shape at or below it.
 
 The cell below performs that calculation from the measured native shapes rather
 than asserting the numbers, so the same code selects valid shapes for a
-different box, patch size or source pair."""),
+different box, patch size or source pair.
+
+It also sets `support_threshold` per source instead of once for both, which
+matters more than it looks. The threshold is the fraction of an output cell
+that must be covered before the renderer fills it, and a nadir track covers a
+line rather than an area. Ask a track for half-covered cells and every cell
+fails, so the source comes back structurally absent and the pair has nothing to
+super-resolve from. The swath keeps the stricter threshold, because for a wide
+swath the question of how much of a cell was measured is a real one."""),
     code("""
 FACTOR = 4          # the super-resolution factor the architecture expects
 SR_PAIR = ("l3_ssh", "l3_swot")
@@ -822,38 +1008,52 @@ print(f"fine target: {fine_side} x {fine_side}, coarse input: {coarse_side} x {c
 print(f"fine shape stays at or below native: {fine_side <= smallest_side}")
 print(f"the ratio is an exact power of two: {fine_side // coarse_side == FACTOR}")
 
-coarse_set = OceanTACODataset(queries=super_draw,
-                              sources={token: Resample((coarse_side, coarse_side), support_threshold=0.5) for token in SR_PAIR},
-                              catalog_config=config)
-fine_set = OceanTACODataset(queries=super_draw,
-                            sources={token: Resample((fine_side, fine_side), support_threshold=0.5) for token in SR_PAIR},
-                            catalog_config=config)
-coarse_rows = [coarse_set[index] for index in range(len(coarse_set))]
-fine_rows = [fine_set[index] for index in range(len(fine_set))]
+# Support thresholds are per source, because what counts as enough support
+# depends on the sampling geometry. A threshold of 0.5 asks that half of an
+# output cell be covered before it is filled, which suits a wide swath. A nadir
+# track covers a line rather than an area, so no cell of any useful size ever
+# reaches half, and the same threshold would empty the source entirely.
+SR_SUPPORT = {"l3_ssh": 0.0, "l3_swot": 0.5}
+
+def sr_sources(side):
+    return {token: Resample((side, side), support_threshold=SR_SUPPORT[token]) for token in SR_PAIR}
+
+coarse_set = OceanTACODataset(queries=super_draw, sources=sr_sources(coarse_side), catalog_config=config)
+fine_set = OceanTACODataset(queries=super_draw, sources=sr_sources(fine_side), catalog_config=config)
+coarse_batch = one_batch(coarse_set)
+fine_batch = one_batch(fine_set)
 print()
-print(f"coarse batch shape: {tuple(np.asarray(coarse_rows[0][SR_PAIR[0]]['data']).shape)}")
-print(f"fine batch shape:   {tuple(np.asarray(fine_rows[0][SR_PAIR[0]]['data']).shape)}")
+print(f"coarse batch shape: {tuple(coarse_batch[SR_PAIR[0]]['data'].shape)}")
+print(f"fine batch shape:   {tuple(fine_batch[SR_PAIR[0]]['data'].shape)}")
 print("No upsampling warning is raised, because both shapes stay at or below native for every row.")
 """),
     code("""
-# Four drawn rows rather than one, so the pair is judged across varied swath
-# coverage instead of on a single favourable sample.
-shown_rows = range(min(4, len(coarse_rows)))
-fig, axes = plt.subplots(len(SR_PAIR) * 2, len(shown_rows),
-                         figsize=(3.4 * len(shown_rows), 3.1 * len(SR_PAIR) * 2),
-                         constrained_layout=True)
-for column, index in enumerate(shown_rows):
-    stages = [(token, f"{token} {label} {side}x{side}", rows[index][token])
-              for token in SR_PAIR
-              for label, side, rows in (("input", coarse_side, coarse_rows), ("target", fine_side, fine_rows))]
-    for axis, (token, title, record) in zip(axes[:, column], stages):
-        values = np.asarray(record["data"])[0]
-        shown = np.where(np.asarray(record["valid_mask"])[0], values, np.nan)
+# The whole batch rather than a chosen few rows, so the pair is judged across
+# the full spread of swath coverage instead of on favourable samples.
+count = coarse_batch[SR_PAIR[0]]["data"].shape[0]
+stages = [(token, label, side, batch)
+          for token in SR_PAIR
+          for label, side, batch in (("input", coarse_side, coarse_batch), ("target", fine_side, fine_batch))]
+fig, axes = plt.subplots(len(stages), count, squeeze=False,
+                         figsize=(2.5 * count, 2.7 * len(stages)), constrained_layout=True)
+for row, (token, label, side, batch) in enumerate(stages):
+    available = batch["availability"][token]
+    for column in range(count):
+        axis = axes[row, column]
+        axis.set(xticks=[], yticks=[])
+        record = batch_member(batch, token, column)
+        extent = geographic_extent(record)
+        if not available[column] or not np.isfinite(extent).all():
+            axis.text(.5, .5, "no data", ha="center", va="center", fontsize=8,
+                      color="#777777", transform=axis.transAxes)
+            continue
+        shown = np.where(np.asarray(record["valid_mask"])[0], np.asarray(record["data"])[0], np.nan)
         axis.imshow(shown, origin="lower", cmap=CMAP, interpolation="nearest",
-                    aspect="auto", extent=geographic_extent(record), **color_limits(token))
-        axis.set(title=title, xticks=[], yticks=[])
-    axes[0, column].set_xlabel(f"row {index}")
-fig.suptitle(f"{FACTOR}x super-resolution pairs across {len(shown_rows)} drawn rows")
+                    aspect="auto", extent=extent, **color_limits(token))
+    axes[row, 0].set_ylabel(f"{token}\\n{label} {side}x{side}", fontsize=8)
+for column in range(count):
+    axes[0, column].set_title(batch_dates(coarse_batch)[column], fontsize=8)
+fig.suptitle(f"{FACTOR}x super-resolution pairs across one batch of {count} rows")
 display_figure(fig)
 print(f"Each column is a different position and date. The {FACTOR}x factor holds for every one of them,")
 print("while how much of the box each instrument measured changes from column to column.")
@@ -883,19 +1083,53 @@ multi_sources = {
     "l3_swot": Resample((32, 32), support_threshold=0.5),
 }
 multi_set = OceanTACODataset(queries=super_draw, sources=multi_sources, catalog_config=config)
-present = {token: 0 for token in multi_sources}
-for index in range(len(super_draw.rows)):
-    for token, available in multi_set[index]["availability"].items():
-        present[token] += bool(available)
-rows = len(super_draw.rows)
-for token, count in present.items():
-    print(f"  {token:9s} available in {count}/{rows} drawn rows")
-first = multi_set[0]
-print("valid fraction per source in row 0:")
+multi_batch = one_batch(multi_set)
+rows = multi_batch["l4_sst"]["data"].shape[0]
 for token in multi_sources:
-    mask = np.asarray(first[token]["valid_mask"])
-    print(f"  {token:9s} {mask.mean():.3f}" if mask.size else f"  {token:9s} structurally absent")
+    available = multi_batch["availability"][token]
+    fractions = multi_batch[token]["valid_mask"].flatten(1).float().mean(dim=1)
+    print(f"  {token:9s} available in {sum(available)}/{rows} rows, "
+          f"valid fraction per row {[round(float(value), 2) for value in fractions]}")
+print()
 print("A low valid fraction on a sparse source is evidence about sampling, not about the ocean.")
+"""),
+    md("""### The batch this query shape produces
+
+The counts above say every row carries SWOT. The figure says what carrying it
+actually looks like, and the contrast with the two dense rows is the point of
+the section: the analyses fill their patch, and the swath crosses it at a
+different angle and a different width in every column.
+
+A model fusing these three has to handle that variation per sample rather than
+assume a fixed observation geometry."""),
+    code("""
+# One column per batch member, one row per source, so the sparse source is read
+# against the dense ones it is being fused with.
+tokens = list(multi_sources)
+fig, axes = plt.subplots(len(tokens), rows, squeeze=False,
+                         figsize=(2.5 * rows, 2.8 * len(tokens)), constrained_layout=True)
+for row, token in enumerate(tokens):
+    available = multi_batch["availability"][token]
+    for column in range(rows):
+        axis = axes[row, column]
+        axis.set(xticks=[], yticks=[])
+        record = batch_member(multi_batch, token, column)
+        extent = geographic_extent(record)
+        if not available[column] or not np.isfinite(extent).all():
+            axis.text(.5, .5, "no data", ha="center", va="center", fontsize=8,
+                      color="#777777", transform=axis.transAxes)
+            continue
+        shown = np.where(np.asarray(record["valid_mask"])[0], np.asarray(record["data"])[0], np.nan)
+        axis.imshow(shown, origin="lower", cmap=CMAP, interpolation="nearest",
+                    aspect="auto", extent=extent, **color_limits(token))
+        add_coastlines(axis)
+    axes[row, 0].set_ylabel(token, fontsize=9)
+for column in range(rows):
+    axes[0, column].set_title(batch_dates(multi_batch)[column], fontsize=8)
+fig.suptitle(f"One batch of {rows} rows, each carrying two dense analyses and the SWOT swath")
+display_figure(fig)
+print("The white area in the l3_swot row is the part of the patch the satellite did not overfly")
+print("on that date, which is why conditioning the draw on coverage is what makes these rows usable.")
 """),
     md("""## 5. Mixed output shapes in one sample
 
@@ -925,6 +1159,47 @@ swot_shapes = native_shapes(mixed, "l3_swot")
 print(f"native l3_swot shapes across the draw: {swot_shapes}")
 print(f"distinct shapes: {len(set(swot_shapes))} of {len(swot_shapes)} rows")
 """),
+    md("""### The batch this query shape produces
+
+A batch of eight rows whose shapes disagree cannot be stacked as they are, so
+`native_pad_collate` pads each row up to the largest in the batch and records
+where it did so in `spatial_padding_mask`. The figure below draws that mask,
+alongside the fixed-shape token that needed no padding at all.
+
+Padded cells are not measurements and not missing measurements either. They are
+an artifact of putting rows of different sizes in one tensor, which is why they
+get their own mask rather than being folded into `valid_mask`."""),
+    code("""
+mixed_batch = one_batch(mixed, collate=native_pad_collate)
+fixed, native = mixed_batch["l4_sst"], mixed_batch["l3_swot"]
+print(f"l4_sst  stacks directly:  {tuple(fixed['data'].shape)}")
+print(f"l3_swot padded up to:     {tuple(native['data'].shape)}  from {native['true_shapes']}")
+padded_fraction = native["spatial_padding_mask"].flatten(1).float().mean(dim=1)
+print(f"padded cell fraction per row: {[round(float(value), 2) for value in padded_fraction]}")
+
+count = native["data"].shape[0]
+fig, axes = plt.subplots(3, count, squeeze=False, figsize=(2.4 * count, 7.4), constrained_layout=True)
+for column in range(count):
+    swot = np.where(np.asarray(native["valid_mask"])[column][0],
+                    np.asarray(native["data"])[column][0], np.nan)
+    axes[0, column].imshow(swot, origin="lower", cmap=CMAP, interpolation="nearest",
+                           aspect="auto", **color_limits("l3_swot"))
+    axes[1, column].imshow(np.asarray(native["spatial_padding_mask"])[column], origin="lower",
+                           cmap="Greys", interpolation="nearest", aspect="auto", vmin=0, vmax=1)
+    sst = np.where(np.asarray(fixed["valid_mask"])[column][0],
+                   np.asarray(fixed["data"])[column][0], np.nan)
+    axes[2, column].imshow(sst, origin="lower", cmap=CMAP, interpolation="nearest",
+                           aspect="auto", **color_limits("l4_sst"))
+    axes[0, column].set_title(f"{native['true_shapes'][column][1]}x{native['true_shapes'][column][2]}", fontsize=8)
+    for row in range(3):
+        axes[row, column].set(xticks=[], yticks=[])
+for row, label in enumerate(("l3_swot, padded", "spatial_padding_mask", "l4_sst, fixed 32x32")):
+    axes[row, 0].set_ylabel(label, fontsize=8)
+fig.suptitle(f"One padded batch of {count} native rows, with the padding it required")
+display_figure(fig)
+print("The dark region in the middle row is padding, and it differs per row because the native")
+print("shapes do. The bottom row needed none, which is what a fixed Resample shape buys.")
+"""),
     md("""## 6. Normalisation statistics, computed once
 
 Statistics belong to the experiment rather than to the batch. Computing them
@@ -941,82 +1216,113 @@ patch went unobserved."""),
     code("""
 import torch
 training_set = QuerySet.from_hub(PATCH_SIZE_KM, "training")
-stats_draw = draw_queryset(training_set, requested_row_count=8, seed=3,
+stats_draw = draw_queryset(training_set, requested_row_count=BATCH_SIZE, seed=3,
                            record_path=DRAW_DIR / "stats-draw.json",
                            query_filter=QueryFilter(box=BOX))
 stats_data = OceanTACODataset(queries=stats_draw, sources=SOURCE, catalog_config=config)
-total, count, squares = 0.0, 0, 0.0
-for index in range(len(stats_draw.rows)):
-    record = stats_data[index]["l4_sst"]
-    values, mask = record["data"], record["valid_mask"]
-    if mask.sum():
-        selected = values[mask]
-        total += float(selected.sum()); squares += float((selected ** 2).sum()); count += int(mask.sum())
-SST_MEAN = total / count
-SST_STD = max((squares / count - SST_MEAN ** 2) ** .5, 1e-6)
-print(f"training rows used: {len(stats_draw.rows)}; valid cells: {count}")
+stats_batch = one_batch(stats_data)
+stats_values, stats_mask = stats_batch["l4_sst"]["data"], stats_batch["l4_sst"]["valid_mask"]
+selected = stats_values[stats_mask]
+SST_MEAN = float(selected.mean())
+SST_STD = max(float(selected.std()), 1e-6)
+print(f"training rows used: {stats_values.shape[0]}; valid cells: {int(stats_mask.sum())}")
 print(f"fixed statistics: mean={SST_MEAN:.3f} degC, std={SST_STD:.3f} degC")
 # The same average taken two ways on a sparse source, where the mask actually
 # excludes cells. l4_sst is dense and complete here, so it would show no
 # difference at all.
 sparse_data = OceanTACODataset(queries=super_draw, sources={"l3_swot": Resample((32, 32), support_threshold=0.5)},
                                catalog_config=config)
-sparse_record = sparse_data[0]["l3_swot"]
-sparse_values, sparse_mask = sparse_record["data"], sparse_record["valid_mask"]
+sparse_batch = one_batch(sparse_data)
+sparse_values, sparse_mask = sparse_batch["l3_swot"]["data"], sparse_batch["l3_swot"]["valid_mask"]
 filled = torch.nan_to_num(sparse_values, nan=0.0)
 print(f"l3_swot valid cells: {int(sparse_mask.sum())} of {sparse_mask.numel()}")
 print(f"  masked mean      = {float(sparse_values[sparse_mask].mean()):.4f} m")
 print(f"  zero-filled mean = {float(filled.mean()):.4f} m")
 print("Zero-filling counts every unsampled cell as a measured zero and pulls the average towards it.")
 """),
-    md("""## 7. The training loader
+    md("""### What the statistics do to the batch
 
-Three details decide whether a loader built on this library works, and each is
-easy to get wrong.
+Four histograms over the batch above. The left column is the training source
+before and after normalisation, the transform every input downstream goes
+through. Normalising only shifts and rescales the axis, so the two shapes are
+the same and the axis labels carry the difference.
 
-**The collate function.** `collate_ocean_samples` defaults to
-`native="ragged"`, which returns `{"items": [...]}` for a `Native()` token
-rather than a tensor. That default is deliberate, since padding a native grid
-invents cells. For a `DataLoader` that indexes tensors, pass `native_pad_collate`,
-which is the same function with `native="padded"` and which labels every padded
-cell through `spatial_padding_mask`. Fixed-grid tokens stack either way.
-
-**Worker seeding.** With `num_workers > 0`, pass
-`worker_init_fn=seed_ocean_taco_worker`. It reseeds Python and NumPy from
-PyTorch's per-worker seed and resets the shipped loader in each worker. Worker
-safety is otherwise handled inside the library, since the dataset nulls its
-backends when pickled and a fork guard drops parent catalog state, so no file
-handles cross the fork.
-
-**Bucketing shuffles by default.** `ShapeBucketSampler` shuffles within and
-across buckets unless told otherwise, so pass `shuffle=False` or a fixed seed
-for reproducible output.
-
-Both regimes appear below: fixed `Resample` shapes stacking directly, and
-`Native()` shapes batched through the bucket sampler."""),
+The right column is the one to read carefully. It counts the sparse source two
+ways, and the grey spike in the upper panel is thousands of cells the swath
+never visited, entered as measured zeros. The dotted line marks where the
+honest average sits, so the distance to each panel's own dashed mean is the
+error that zero-filling introduces."""),
     code("""
-from torch.utils.data import DataLoader
-from ocean_taco.torch import ShapeBucketSampler, collate_ocean_samples, native_pad_collate, seed_ocean_taco_worker
+fig, axes = plt.subplots(2, 2, figsize=(12, 6.4), constrained_layout=True,
+                         height_ratios=(1, 1))
 
-fixed_loader = DataLoader(mixed, batch_size=2, num_workers=2,
-                          collate_fn=native_pad_collate,
-                          worker_init_fn=seed_ocean_taco_worker)
-batch = next(iter(fixed_loader))
-print("fixed-shape token stacks directly:")
-print(f"  l4_sst data={tuple(batch['l4_sst']['data'].shape)}")
-print("native token is padded, and the padding is labelled:")
-print(f"  l3_swot data={tuple(batch['l3_swot']['data'].shape)} "
-      f"padding_mask={tuple(batch['l3_swot']['spatial_padding_mask'].shape)}")
-print(f"  availability: {batch['availability']}")
+# Raw and normalised go in separate panels rather than on shared axes. The
+# transform only shifts and rescales the horizontal axis, so overlaying the two
+# would put identical shapes on top of each other and show nothing.
+raw = stats_values[stats_mask].flatten().numpy()
+normalised = (raw - SST_MEAN) / SST_STD
+axes[0, 0].hist(raw, bins=60, color="#2474a6")
+axes[0, 0].axvline(SST_MEAN, color="#333333", linestyle="--", linewidth=1)
+axes[0, 0].set(title=f"l4_sst raw, {stats_values.shape[0]} training rows through the mask",
+               xlabel="degrees celsius", ylabel="valid cells")
+axes[1, 0].hist(normalised, bins=60, color="#d95f02")
+axes[1, 0].axvline(0, color="#333333", linestyle="--", linewidth=1)
+axes[1, 0].set(title="the same cells after normalisation",
+               xlabel="standard deviations from the mean", ylabel="valid cells")
 
+masked_only = sparse_values[sparse_mask].flatten().numpy()
+zero_filled = filled.flatten().numpy()
+bins = np.linspace(-.6, .6, 61)
+for axis, (values, color, label) in zip(axes[:, 1], (
+        (zero_filled, "#999999", "zero-filled, every cell counted"),
+        (masked_only, "#d95f02", "through the mask, measured cells only"))):
+    axis.hist(values, bins=bins, color=color)
+    axis.axvline(float(values.mean()), color="#333333", linestyle="--", linewidth=1)
+    axis.set(title=f"l3_swot {label}", xlabel="sea level anomaly [m]",
+             ylabel="cells", yscale="log", ylim=(.7, 1e4))
+    axis.axvline(float(masked_only.mean()), color="#d95f02", linestyle=":", linewidth=1)
+display_figure(fig)
+print("The grey spike at zero is every cell the swath never covered, counted as a measurement.")
+print("The dashed lines are the two means, and the gap between them is the error that spike causes.")
+"""),
+    md("""## 7. Batching without padding, through the bucket sampler
+
+Every section above pulled its batch through `one_batch`, so the loader
+settings are already in hand: `collate_ocean_samples` for fixed shapes,
+`native_pad_collate` when a `Native()` token has to become a tensor, and
+`seed_ocean_taco_worker` so worker processes do not share one seed. Worker
+safety needs nothing further, because the dataset nulls its backends when
+pickled and a fork guard drops parent catalog state, so no file handles cross
+the fork.
+
+The case those settings do not cover is the one §5 left open. Padding made the
+native rows stackable, at the cost of a tensor that was mostly padding on some
+rows. `ShapeBucketSampler` avoids paying that cost by choosing which rows share
+a batch: it groups rows whose native shapes already agree, so each batch stacks
+with little or no padding.
+
+The tradeoff is that batch composition is no longer free. Rows are grouped by
+shape rather than drawn independently, and the sampler shuffles within and
+across buckets unless a seed and `shuffle=False` say otherwise. Compare the
+padded cell counts below against §5's, which batched the same rows in draw
+order."""),
+    code("""
 native_only = OceanTACODataset(queries=super_draw, sources={"l3_swot": Native()}, catalog_config=config)
-sampler = ShapeBucketSampler(native_shapes(native_only, "l3_swot"), batch_size=2, seed=19, shuffle=False)
+shapes = native_shapes(native_only, "l3_swot")
+sampler = ShapeBucketSampler(shapes, batch_size=2, seed=19, shuffle=False)
 bucket_loader = DataLoader(native_only, batch_sampler=sampler, collate_fn=native_pad_collate,
                            num_workers=2, worker_init_fn=seed_ocean_taco_worker)
-print(f"bucketed batches: {len(sampler)}")
+print(f"{len(set(shapes))} distinct shapes across {len(shapes)} rows -> {len(sampler)} bucketed batches")
+bucketed_padding = []
 for index, bucketed in enumerate(bucket_loader):
-    print(f"  batch {index}: {tuple(bucketed['l3_swot']['data'].shape)} "
-          f"padded cells={int(bucketed['l3_swot']['spatial_padding_mask'].sum())}")
+    padded = int(bucketed["l3_swot"]["spatial_padding_mask"].sum())
+    bucketed_padding.append(padded)
+    print(f"  batch {index}: {tuple(bucketed['l3_swot']['data'].shape)} padded cells={padded}")
+print()
+print(f"padded cells, bucketed into {len(sampler)} batches: {sum(bucketed_padding):,d}")
+print(f"padded cells, one batch in draw order (section 5): {int(native['spatial_padding_mask'].sum()):,d}")
+print("Grouping by shape is what removes that padding, and the cost is that a batch no longer holds")
+print("an independent sample of the draw.")
 """),
     md("""## 8. A training step with a masked loss
 
@@ -1038,12 +1344,13 @@ The step below trains one small convolution to predict the midpoint field from
 its context. The loss is computed only on cells valid in both the input and the
 target, so unobserved cells contribute no gradient.
 
-One batch in this small draw has no target at all, because L4 SST has no asset
-for those two anchor dates and the target render is therefore structurally
-absent. The loop reads `availability` and skips it. A batch of absent targets
-is an ordinary event at this draw size rather than a failure, and reading
-availability is how a training loop tells that case apart from a batch whose
-targets are present but heavily masked."""),
+Three of the four batches below carry a member whose target is structurally
+absent, because L4 SST has no asset for that anchor date. Those members
+contribute no valid cells, which the printed counts show as half a batch rather
+than a whole one. The loop still reads `availability` and skips a batch where
+every target is absent, which is the case a heavily masked batch would
+otherwise be confused with. At this draw size it does not arise, and the guard
+is there for the draws where it does."""),
     code("""
 def masked_mse(prediction, target, mask):
     # Cells outside the mask contribute no gradient at all, rather than
@@ -1085,7 +1392,7 @@ for step, (context_batch, target_batch) in enumerate(zip(context_loader, target_
     loss = masked_mse(model(inputs), targets, mask)
     optimiser.zero_grad(); loss.backward(); optimiser.step()
     print(f"step {step}: batch={tuple(inputs.shape)} targets available={present} "
-          f"valid cells={int(mask.sum())} of {mask.numel()} loss={float(loss):.4f}")
+          f"valid cells={int(mask.sum())} of {mask.numel()} loss={float(loss.detach()):.4f}")
 print("The loss saw only cells valid in both the context and the target.")
 """),
     code("""
