@@ -51,6 +51,11 @@ hf = [
 materialize = [
     "dask[array]>=2024.10",
 ]
+generate = [
+    "argopy",
+    "copernicusmarine>=2.2.1",
+    "tacotoolbox>=0.26.1",
+]
 tests = [
     "pytest>=8.0",
     "ruff>=0.9",
@@ -64,6 +69,10 @@ docs = [
 ]
 benchmarks = [
     "zarr>=2.18",
+]
+viz = [
+    "matplotlib>=3.10",
+    "cartopy>=0.23.0",
 ]
 tutorials = [
     "jupyterlab>=4.0",
