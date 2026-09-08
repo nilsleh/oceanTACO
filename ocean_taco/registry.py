@@ -105,7 +105,28 @@ MODALITY_REGISTRY: dict[str, ModalitySpec] = {
         source_time_kind="instant",
     ),
     "l3_ssh": _grid("l3_ssh", "l3_ssh", "l3_ssh.nc", "sla_filtered", "m", ("m", "meter", "metre"), source_time_kind="instant"),
-    "l3_swot": _grid("l3_swot", "l3_swot", "l3_swot.nc", "ssha_filtered", "m", ("m", "meter", "metre"), source_time_kind="instant"),
+    "l3_swot": _grid(
+        "l3_swot",
+        "l3_swot",
+        "l3_swot.nc",
+        "ssha_filtered",
+        "m",
+        ("m", "meter", "metre"),
+        source_time_kind="instant",
+        known_discontinuities=(
+            (
+                "Calibration phase (1-day repeat orbit) through 2023-07-10: the swath "
+                "footprint repeats daily, so a fixed box looks unchanging even though "
+                "the values evolve."
+            ),
+            "Orbit change 2023-07-11 to 2023-07-25: no asset is published.",
+            (
+                "Science phase (21-day repeat orbit) from 2023-07-26: the swath moves "
+                "daily, so a fixed box is all-NaN on most days."
+            ),
+            "33 dates publish no asset in any region; see the dataset description.",
+        ),
+    ),
     "l3_sss_smos_asc": _grid("l3_sss_smos_asc", "l3_sss_smos_asc", "l3_sss_asc.nc", "Sea_Surface_Salinity", "PSS-78", ("PSS-78", "1", "psu"), source_time_kind="instant"),
     "l3_sss_smos_desc": _grid("l3_sss_smos_desc", "l3_sss_smos_desc", "l3_sss_desc.nc", "Sea_Surface_Salinity", "PSS-78", ("PSS-78", "1", "psu"), source_time_kind="instant"),
     "glorys_ssh": _grid("glorys_ssh", "glorys", "glorys.nc", "zos", "m", ("m", "meter", "metre")),

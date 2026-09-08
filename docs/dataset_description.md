@@ -10,11 +10,73 @@ OceanTACO is a multi-source oceanographic dataset covering five sea surface vari
 
 OceanTACO is released in two temporal versions to support both SWOT-era and longer pre-SWOT analyses.
 
-- **Core version:** `2023-03-29` to `2025-08-01` (includes SWOT calibration and science phases).
+- **Core version:** `2023-03-29` to `2025-08-01` (spans both the SWOT calibration and science phases — see [SWOT mission phases](#swot-mission-phases) below, which changes how `l3_swot` behaves across dates).
 - **Extended version:** `2015-01-01` to `2023-03-29` (all modalities except SWOT).
 - **Shared boundary date:** both versions meet at `2023-03-29`, which allows seamless concatenation.
 
 Temporal indexing is daily. The core period contains 856 daily indices, and the extended period contains 3009 daily indices.
+
+---
+
+## SWOT Mission Phases
+
+The Core period spans two different SWOT orbits. `l3_swot` behaves very
+differently in each, and both regimes are routinely mistaken for broken or
+duplicated data.
+
+| Phase | Dates | Repeat cycle | What a fixed bounding box looks like |
+|---|---|---|---|
+| Calibration ("fast-sampling") | `2023-03-29` – `2023-07-10` | 1 day | The swath sits in the **same place every day**; a daily mosaic looks *identical* |
+| Orbit change | `2023-07-11` – `2023-07-25` | — | **No `l3_swot.nc` is published** on these dates |
+| Science | `2023-07-26` – `2025-08-02` | 21 days | The swath **moves every day**; a small box is **empty (all-NaN) on most days** |
+
+### During calibration, an unchanging picture is not unchanging data
+
+In the 1-day repeat orbit the swath *footprint* repeats (day-to-day overlap of
+the observed pixels is ~99%), so a mosaic over a fixed box looks static. The
+values inside the swath still evolve:
+
+![SWOT calibration phase mosaic](images/swot_phase_calibration.png)
+
+Differencing consecutive days shows coherent, evolving mesoscale structure, with
+mean absolute differences of roughly 0.02–0.05 m. No two days are pixel-identical:
+
+![SWOT calibration phase day-to-day differences](images/swot_phase_differences.png)
+
+### During science, most days over a small box are legitimately empty
+
+In the 21-day repeat orbit the swath moves daily. Over a fixed box, revisits land
+at lags of 0, 11 and 21/22 days — the 21-day cycle plus its ascending / descending
+sub-cycle — so most days carry no observation at all. All-NaN days are
+pixel-identical to one another, which is a second, unrelated way a mosaic can
+appear "the same":
+
+![SWOT science phase mosaic](images/swot_phase_science.png)
+
+The two regimes are clearest side by side over a full year of coverage: a flat
+plateau while the orbit repeats daily, a hard gap at the orbit change, then a
+regular 21-day oscillation.
+
+![SWOT coverage over a fixed box across both mission phases](images/swot_revisit_coverage.png)
+
+### Gaps and no-data semantics
+
+SWOT is gridded at ~2 km with `processing = bin_mean_no_smoothing`. There is **no
+gap-filling**, so `NaN` always means "not observed here on this day" and never
+zero. Averaging or training over SWOT should mask on finite values rather than
+assuming dense coverage.
+
+Beyond the orbit-change window, 33 dates publish no `l3_swot.nc` in any region
+(SWOT-wide outages, not per-region formatting misses): `2023-05-20/21`,
+`2023-07-11`–`2023-07-25`, `2023-09-22`–`2023-09-26`, `2023-12-23`–`2023-12-27`,
+`2024-05-11/12`, `2024-10-28`, `2025-01-11/12`, `2025-04-26/27`. Other modalities
+are unaffected on those dates.
+
+The figures above are regenerated with:
+
+```sh
+python scripts/dev/swot_phase_figures.py --out docs/images
+```
 
 ---
 

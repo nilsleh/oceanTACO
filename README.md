@@ -20,6 +20,47 @@ Current dataset coverage includes:
 
 The Core dataset spans 2023-03-29 until 2025-08-01 and includes the SWOT data. It is available on [Hugging Face](https://huggingface.co/datasets/nilsleh/OceanTACO). The extended dataset spans 2015-01-01 until 2023-03-29 but preceeds the SWOT era and is available on [Hugging Face](https://huggingface.co/datasets/nilsleh/OceanTACO_extended).
 
+### SWOT mission phases (read this before comparing SWOT across dates)
+
+The Core dataset spans two different SWOT orbits, and `l3_swot` behaves very
+differently in each. Both regimes are routinely mistaken for broken or duplicated
+data, so check which phase your dates fall in before filing a bug.
+
+| Phase | Dates | Repeat cycle | What a fixed bounding box looks like |
+|---|---|---|---|
+| Calibration ("fast-sampling") | `2023-03-29` – `2023-07-10` | 1 day | The swath sits in the **same place every day**, so a daily animation or mosaic looks *identical* |
+| Orbit change | `2023-07-11` – `2023-07-25` | — | **No `l3_swot.nc` is published** on these dates |
+| Science | `2023-07-26` – `2025-08-02` | 21 days | The swath **moves every day**, so a small box is **empty (all-NaN) on most days** |
+
+Two consequences worth stating explicitly:
+
+- **During calibration, an unchanging picture does not mean unchanging data.** The
+  swath *footprint* repeats, but the values inside it do not: consecutive days
+  differ by roughly 0.02–0.05 m on average over a 10°x10° box, with coherent
+  mesoscale structure. Difference the days to see it.
+- **During science, most days over a small box are legitimately empty.** Revisits
+  land at lags of 0, 11 and 21/22 days (the 21-day cycle plus its ascending /
+  descending sub-cycle). All-NaN days are pixel-identical to one another, which is
+  a second, unrelated way a mosaic can appear "the same".
+
+SWOT is gridded at ~2 km with `processing = bin_mean_no_smoothing`: there is **no
+gap-filling**, so `NaN` always means "not observed here on this day", never zero.
+
+Beyond the orbit-change window, 33 dates in total publish no `l3_swot.nc` in any
+region (SWOT-wide outages): `2023-05-20/21`, `2023-07-11`–`2023-07-25`,
+`2023-09-22`–`2023-09-26`, `2023-12-23`–`2023-12-27`, `2024-05-11/12`,
+`2024-10-28`, `2025-01-11/12`, `2025-04-26/27`. Other modalities are unaffected on
+those dates.
+
+<img src="docs/images/swot_revisit_coverage.png" alt="SWOT coverage over a fixed box across both mission phases" width="900" />
+
+See [Dataset Description](https://oceantaco.readthedocs.io/en/latest/dataset_description.html)
+for the per-phase figures. To regenerate them:
+
+```sh
+python scripts/dev/swot_phase_figures.py --out docs/images
+```
+
 <img src="docs/images/oceantaco.svg" alt="OceanTACO Figure" width="760" />
 
 Generated directly from OceanTACO sources (GLORYS SST, SSH L4, SSH SWOT, SST L4, SSS L4, Argo).
