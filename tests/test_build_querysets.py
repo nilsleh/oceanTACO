@@ -20,7 +20,6 @@ xr = pytest.importorskip("xarray")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "release"))
 
 from queryset_build import (  # noqa: E402
-    ArgoDay,
     build_argo_day,
     build_global_grid,
     build_position_plan,
@@ -392,6 +391,7 @@ def test_exact_crop_boundary_is_inclusive(ocean_mask):
 def test_plan_id_changes_when_code_revision_changes():
     """A changed builder revision must invalidate resumable measurement shards."""
     import argparse
+
     import build_querysets as builder
     from queryset_build import GlobalGrid
 

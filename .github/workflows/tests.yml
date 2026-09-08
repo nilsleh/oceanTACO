@@ -33,13 +33,12 @@ jobs:
       # on that backlog would block every unrelated change. Widen the paths as
       # those directories are cleaned up.
       - name: Lint shipped surface
-        continue-on-error: true
         run: |
           ruff check --no-fix \
             ocean_taco/access ocean_taco/render ocean_taco/sampling ocean_taco/torch \
             ocean_taco/__init__.py ocean_taco/catalog.py ocean_taco/filter.py \
-            ocean_taco/geobox.py ocean_taco/manifest.py ocean_taco/registry.py \
-            ocean_taco/retrieve.py ocean_taco/temporal.py \
+            ocean_taco/geobox.py ocean_taco/plot.py ocean_taco/queryset.py \
+            ocean_taco/registry.py ocean_taco/retrieve.py ocean_taco/temporal.py \
             tests
 
       - name: Run offline test suite

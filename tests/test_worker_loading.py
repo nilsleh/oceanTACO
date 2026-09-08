@@ -148,8 +148,8 @@ from ocean_taco import CatalogConfig, PatchSize, PatchSpec
 from ocean_taco.render import Resample
 from ocean_taco.torch import OceanTACODataset, seed_ocean_taco_worker
 
-port = Path(r'''%s''')
-cache = Path(r'''%s''')
+port = Path(r'''__PORT__''')
+cache = Path(r'''__CACHE__''')
 spec = PatchSpec(
     centre_lon=-55.0, centre_lat=25.0, patch_size=PatchSize(2.0, 'deg'),
     anchor_time='2023-03-29T00:00:00Z', context_start_offset_days=0,
@@ -164,7 +164,10 @@ for sample in DataLoader(dataset, batch_size=None, num_workers=2,
                          worker_init_fn=seed_ocean_taco_worker):
     assert sample['availability']['l4_sst']
 print('worker loading completed')
-""" % (LOCAL_PORT, tmp_path / "cache")
+"""
+    script = script.replace("__PORT__", str(LOCAL_PORT)).replace(
+        "__CACHE__", str(tmp_path / "cache")
+    )
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(ROOT)
     result = subprocess.run(

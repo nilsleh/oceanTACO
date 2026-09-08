@@ -6,8 +6,8 @@ __version__ = "0.1.0"
 from .catalog import CORE_DATASET_REPO_ID, CORE_DATASET_REVISION, CatalogConfig
 from .filter import CoverageRequirement, QueryFilter, SelectedPairs, select_queryset
 from .geobox import GeoBox, PatchSize, PatchSpec, Query, TimeRange
-from .queryset import PatchSet, QuerySet
 from .plot import plot_ocean_sample
+from .queryset import PatchSet, QuerySet
 from .registry import MODALITY_REGISTRY, ModalitySpec
 from .retrieve import REGION_BIT, REGIONS
 from .sampling import QueryDraw, build_queryset, draw_queryset, replay_experiment
