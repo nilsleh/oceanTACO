@@ -21,6 +21,10 @@ from .loader import CoreSourceLoader
 Renderer = Native | Resample | Points | VectorPair
 
 
+def _optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)
+
+
 def _patch_from_row(row: Mapping[str, Any]) -> PatchSpec:
     if "patch_spec" in row:
         row = row["patch_spec"]
@@ -36,6 +40,8 @@ def _patch_from_row(row: Mapping[str, Any]) -> PatchSpec:
         context_end_offset_days=int(row["context_end_offset_days"]),
         relation=str(row.get("relation", "same_time")),
         target_lead_days=int(row.get("target_lead_days", 0)),
+        target_start_offset_days=_optional_int(row.get("target_start_offset_days")),
+        target_end_offset_days=_optional_int(row.get("target_end_offset_days")),
     )
 
 
@@ -156,10 +162,13 @@ class OceanTACODataset(Dataset):
                 else (request.token,)
             )
         }
-        specs = {
-            row if isinstance(row, PatchSpec) else _patch_from_row(row)
-            for row in self.rows
-        }
+        specs: set[PatchSpec] = set()
+        for row in self.rows:
+            spec = row if isinstance(row, PatchSpec) else _patch_from_row(row)
+            specs.add(spec)
+            target_spec = spec.target_spec
+            if target_spec is not None:
+                specs.add(target_spec)
         return tuple((token, spec) for token in sorted(tokens) for spec in specs)
 
     def __len__(self) -> int:
@@ -203,17 +212,21 @@ class OceanTACODataset(Dataset):
     def _context_window(dense, spec: PatchSpec, source: ModalitySpec | None = None):
         """Limit a canonical dense source to the patch's UTC context window.
 
-        A ``daily_label`` timestamp names a day rather than an instant in it,
-        and the products place that label differently: GLORYS and L4 SSS stamp
-        12:00 where L4 SSH and L4 wind stamp 00:00.  A single-day context
-        window is zero-width at midnight, so slicing it against a raw
-        timestamp drops the 12:00 sources entirely and reports them as
-        unavailable.  Widen the window to the whole day for those sources,
-        which is the resolution their label actually carries.
+        A requested date covers the whole calendar day, 00:00 to 24:00 UTC.
+        Daily gridded products carry one field per day but disagree about where
+        in the day to stamp it: L4 SSH and L4 wind use 00:00, GLORYS and L4 SSS
+        use 12:00, and L4 SST and the L3 altimetry products use either
+        depending on the granule.  A single-day context window is zero-width at
+        midnight, so slicing it against a raw timestamp drops every granule not
+        stamped exactly at 00:00 and reports the source as structurally absent
+        -- indistinguishable from data that is genuinely missing.
+
+        ``point_time`` sources are excluded: an Argo profile's surfacing time is
+        a real instant rather than a label for its day.
         """
         start = spec.context.start.replace(tzinfo=None)
         end = spec.context.end.replace(tzinfo=None)
-        if source is not None and source.source_time_kind == "daily_label":
+        if source is None or source.source_time_kind != "point_time":
             start = start.replace(hour=0, minute=0, second=0, microsecond=0)
             end = end.replace(hour=23, minute=59, second=59, microsecond=999999)
         return dense.sel(time=slice(start, end))
@@ -226,10 +239,13 @@ class OceanTACODataset(Dataset):
         availability[request.token] = False
         output[request.token] = request.renderer.empty()
 
-    def __getitem__(self, index: int) -> dict[str, Any]:
-        """Render one logical patch into a flat dict keyed by source token."""
-        row = self.rows[index]
-        spec = self._spec_for(row)
+    def _render_spec(self, spec: PatchSpec) -> tuple[dict[str, Any], dict[str, bool]]:
+        """Render every requested source over one spec's context window.
+
+        Both the context and the target go through here.  The target is simply
+        a spec whose context is the target window, so it renders through the
+        same loader, renderer and mask paths with nothing special-cased.
+        """
         output: dict[str, Any] = {}
         availability: dict[str, bool] = {}
         for request in self.source_requests:
@@ -293,7 +309,19 @@ class OceanTACODataset(Dataset):
                 else bool(np.asarray(rendered["valid_mask"]).any())
             )
             output[request.token] = rendered
+        return output, availability
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        """Render one logical patch into a flat dict keyed by source token."""
+        spec = self._spec_for(self.rows[index])
+        output, availability = self._render_spec(spec)
         output["query"] = spec
+        target_spec = spec.target_spec
+        if target_spec is not None:
+            target_output, target_availability = self._render_spec(target_spec)
+            output["target"] = target_output
+            output["target_query"] = target_spec
+            availability["target"] = target_availability
         output["availability"] = availability
         return _to_tensors(output)
 
@@ -602,6 +630,21 @@ def _pad_points(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _collate_token(
+    records: Sequence[Mapping[str, Any]], *, native: Literal["ragged", "padded"]
+) -> dict[str, Any]:
+    """Collate one source token's records by their rendered representation."""
+    if "pres" in records[0]:
+        return _pad_points(records)
+    if "pair_available" in records[0]:
+        return _stack_vector_pair(records)
+    if "support" in records[0]:
+        return _stack_fixed_grid(records)
+    if native == "padded":
+        return _pad_native_grid(records)
+    return {"items": records}
+
+
 def collate_ocean_samples(
     batch: Sequence[Mapping[str, Any]],
     *,
@@ -616,7 +659,8 @@ def collate_ocean_samples(
         return {}
     if native not in {"ragged", "padded"}:
         raise ValueError("native must be 'ragged' or 'padded'.")
-    tokens = [key for key in batch[0] if key not in {"query", "availability"}]
+    reserved = {"query", "availability", "target", "target_query"}
+    tokens = [key for key in batch[0] if key not in reserved]
     result: dict[str, Any] = {
         "query": [sample["query"] for sample in batch],
         "availability": {
@@ -625,17 +669,22 @@ def collate_ocean_samples(
         },
     }
     for token in tokens:
-        records = [sample[token] for sample in batch]
-        if "pres" in records[0]:
-            result[token] = _pad_points(records)
-        elif "pair_available" in records[0]:
-            result[token] = _stack_vector_pair(records)
-        elif "support" in records[0]:
-            result[token] = _stack_fixed_grid(records)
-        elif native == "padded":
-            result[token] = _pad_native_grid(records)
-        else:
-            result[token] = {"items": records}
+        result[token] = _collate_token(
+            [sample[token] for sample in batch], native=native
+        )
+    if "target" in batch[0]:
+        target_tokens = list(batch[0]["target"])
+        result["target"] = {
+            token: _collate_token(
+                [sample["target"][token] for sample in batch], native=native
+            )
+            for token in target_tokens
+        }
+        result["target_query"] = [sample["target_query"] for sample in batch]
+        result["availability"]["target"] = {
+            token: [sample["availability"]["target"][token] for sample in batch]
+            for token in target_tokens
+        }
     return result
 
 

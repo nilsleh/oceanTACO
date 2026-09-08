@@ -646,6 +646,8 @@ class QuerySet:
         context_end_offset_days: int = 0,
         relation: str = "same_time",
         target_lead_days: int = 0,
+        target_start_offset_days: int | None = None,
+        target_end_offset_days: int | None = None,
     ) -> dict[str, Any]:
         """Materialise one logical patch only after experiment-time selection."""
         position = self.position(position_index)
@@ -669,6 +671,8 @@ class QuerySet:
             "context_end_offset_days": context_end_offset_days,
             "relation": relation,
             "target_lead_days": target_lead_days,
+            "target_start_offset_days": target_start_offset_days,
+            "target_end_offset_days": target_end_offset_days,
         }
 
     def write(self, directory: Path | str) -> Path:

@@ -7,7 +7,7 @@ loader and makes antimeridian behaviour explicit at construction time.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from math import cos, isfinite, radians
 from typing import Literal
@@ -215,6 +215,8 @@ class PatchSpec:
     context_end_offset_days: int
     relation: Literal["same_time", "forecast"] = "same_time"
     target_lead_days: int = 0
+    target_start_offset_days: int | None = None
+    target_end_offset_days: int | None = None
 
     def __post_init__(self) -> None:
         if not isfinite(self.centre_lon) or not -180.0 <= self.centre_lon <= 180.0:
@@ -229,6 +231,18 @@ class PatchSpec:
             raise ValueError("same_time PatchSpecs must have target_lead_days=0.")
         if self.relation == "forecast" and self.target_lead_days <= 0:
             raise ValueError("forecast PatchSpecs require a positive target_lead_days.")
+        if (self.target_start_offset_days is None) != (
+            self.target_end_offset_days is None
+        ):
+            raise ValueError(
+                "Target offsets must be given as a pair or omitted entirely."
+            )
+        if (
+            self.target_end_offset_days is not None
+            and self.target_start_offset_days is not None
+            and self.target_end_offset_days < self.target_start_offset_days
+        ):
+            raise ValueError("Target offsets must form an ordered contiguous range.")
         object.__setattr__(self, "anchor_time", _utc_datetime(self.anchor_time))
 
     @property
@@ -249,6 +263,58 @@ class PatchSpec:
         """Prediction time for this task relation."""
         return self.anchor_time + timedelta(days=self.target_lead_days)
 
+    @property
+    def target_offsets(self) -> tuple[int, int] | None:
+        """Resolved target window offsets, or ``None`` when there is no target.
+
+        Explicit offsets win.  A forecast relation without them falls back to
+        the single lead day, which is what ``target_lead_days`` has always
+        meant.  A ``same_time`` relation without them has no target window:
+        the lead is forced to zero, so deriving one would silently return the
+        anchor day rather than an intentional target.
+        """
+        if self.target_start_offset_days is not None:
+            return (
+                int(self.target_start_offset_days),
+                int(self.target_end_offset_days),
+            )
+        if self.relation == "forecast":
+            return (self.target_lead_days, self.target_lead_days)
+        return None
+
+    @property
+    def target(self) -> TimeRange | None:
+        """Closed target interval relative to the anchor time, if any."""
+        offsets = self.target_offsets
+        if offsets is None:
+            return None
+        return TimeRange(
+            self.anchor_time + timedelta(days=offsets[0]),
+            self.anchor_time + timedelta(days=offsets[1]),
+        )
+
+    @property
+    def target_spec(self) -> PatchSpec | None:
+        """Same footprint and anchor, with the target window as its context.
+
+        The whole loading stack is keyed on ``(token, footprint, context)``, so
+        rendering the target is a matter of handing it a spec whose context is
+        the target window.  The copy is ``same_time`` with no target of its own,
+        which keeps it a terminal leaf rather than a recursive one.
+        """
+        offsets = self.target_offsets
+        if offsets is None:
+            return None
+        return replace(
+            self,
+            context_start_offset_days=offsets[0],
+            context_end_offset_days=offsets[1],
+            relation="same_time",
+            target_lead_days=0,
+            target_start_offset_days=None,
+            target_end_offset_days=None,
+        )
+
     def to_dict(self) -> dict[str, object]:
         """Return the canonical logical sample payload."""
         return {
@@ -261,4 +327,6 @@ class PatchSpec:
             "context_end_offset_days": self.context_end_offset_days,
             "relation": self.relation,
             "target_lead_days": self.target_lead_days,
+            "target_start_offset_days": self.target_start_offset_days,
+            "target_end_offset_days": self.target_end_offset_days,
         }

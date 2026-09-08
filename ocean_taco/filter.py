@@ -69,6 +69,8 @@ class QueryFilter:
     context_end_offset_days: int = 0
     relation: Literal["same_time", "forecast"] = "same_time"
     target_lead_days: int = 0
+    target_start_offset_days: int | None = None
+    target_end_offset_days: int | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -85,10 +87,28 @@ class QueryFilter:
             raise ValueError("same_time filters require target_lead_days=0.")
         if self.relation == "forecast" and self.target_lead_days <= 0:
             raise ValueError("forecast filters require a positive target_lead_days.")
+        if (self.target_start_offset_days is None) != (
+            self.target_end_offset_days is None
+        ):
+            raise ValueError(
+                "Target offsets must be given as a pair or omitted entirely."
+            )
+        if (
+            self.target_end_offset_days is not None
+            and self.target_start_offset_days is not None
+            and self.target_end_offset_days < self.target_start_offset_days
+        ):
+            raise ValueError("Target offsets must form an ordered contiguous range.")
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a canonical, recordable selection description."""
-        return {
+        """Return a canonical, recordable selection description.
+
+        Unset target offsets are omitted rather than recorded as ``None``, so a
+        filter that declares no explicit target window hashes exactly as it did
+        before those fields existed and every published experiment record keeps
+        replaying.
+        """
+        payload = {
             "date_start": None
             if self.date_start is None
             else utc_isoformat(self.date_start),
@@ -101,6 +121,10 @@ class QueryFilter:
             "relation": self.relation,
             "target_lead_days": self.target_lead_days,
         }
+        if self.target_start_offset_days is not None:
+            payload["target_start_offset_days"] = self.target_start_offset_days
+            payload["target_end_offset_days"] = self.target_end_offset_days
+        return payload
 
     @property
     def sha256(self) -> str:
@@ -223,6 +247,16 @@ class SelectedPairs:
             not in self._date_lookup
         ):
             return False
+        if self.query_filter.target_start_offset_days is not None:
+            for offset in range(
+                self.query_filter.target_start_offset_days,
+                self.query_filter.target_end_offset_days + 1,
+            ):
+                if (
+                    utc_isoformat(anchor + timedelta(days=offset))
+                    not in self._date_lookup
+                ):
+                    return False
         return True
 
     @property

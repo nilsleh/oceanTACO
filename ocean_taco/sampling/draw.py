@@ -28,6 +28,10 @@ def _floyd_ordinals(population_size: int, count: int, seed: int) -> tuple[int, .
     return tuple(sorted(selected))
 
 
+def _optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)
+
+
 def _filter_from_dict(payload: Mapping[str, Any]) -> QueryFilter:
     box_payload = payload.get("box")
     box = GeoBox(**box_payload) if box_payload is not None else None
@@ -44,6 +48,8 @@ def _filter_from_dict(payload: Mapping[str, Any]) -> QueryFilter:
         context_end_offset_days=int(payload.get("context_end_offset_days", 0)),
         relation=str(payload.get("relation", "same_time")),
         target_lead_days=int(payload.get("target_lead_days", 0)),
+        target_start_offset_days=_optional_int(payload.get("target_start_offset_days")),
+        target_end_offset_days=_optional_int(payload.get("target_end_offset_days")),
     )
 
 
@@ -76,6 +82,8 @@ def _record(
         "context_end_offset_days": query_filter.context_end_offset_days,
         "relation": query_filter.relation,
         "target_lead_days": query_filter.target_lead_days,
+        "target_start_offset_days": query_filter.target_start_offset_days,
+        "target_end_offset_days": query_filter.target_end_offset_days,
         "code_commit": queryset.header["code_commit"],
         "environment_lock_hash": queryset.header["environment_lock_hash"],
     }
@@ -128,6 +136,8 @@ def draw_queryset(
             context_end_offset_days=selected.query_filter.context_end_offset_days,
             relation=selected.query_filter.relation,
             target_lead_days=selected.query_filter.target_lead_days,
+            target_start_offset_days=selected.query_filter.target_start_offset_days,
+            target_end_offset_days=selected.query_filter.target_end_offset_days,
         )
         for rank in ranks
     )
@@ -178,6 +188,8 @@ def replay_experiment(
             context_end_offset_days=query_filter.context_end_offset_days,
             relation=query_filter.relation,
             target_lead_days=query_filter.target_lead_days,
+            target_start_offset_days=query_filter.target_start_offset_days,
+            target_end_offset_days=query_filter.target_end_offset_days,
         )
         for rank in ranks
     )
