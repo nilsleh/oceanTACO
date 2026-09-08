@@ -1,0 +1,134 @@
+{
+  "configuration": {
+    "taco_path": "/p/project1/hai_uqmethodbox/nils/oceanTACO/results/generation_audit_20260828/port_20230329_verified/taco/OceanTACO",
+    "queryset": "/p/project1/hai_uqmethodbox/nils/oceanTACO-pr1/release/querysets/v2/512-training",
+    "date": "2023-03-29",
+    "date_end": null,
+    "samples": 32,
+    "sources": [
+      "l3_ssh",
+      "l3_swot"
+    ],
+    "seed": 42,
+    "batch_size": 16,
+    "grid_size": 64,
+    "workers": 2,
+    "prefetch_factor": 1,
+    "epochs": 3,
+    "persistent_workers": true,
+    "shuffle": true,
+    "max_open_files": 16,
+    "context_start": 0,
+    "context_end": 0,
+    "diagnostic_patch": null,
+    "json_output": "/tmp/oceantaco-512-64-w2.json"
+  },
+  "startup": {
+    "queryset_read_seconds": 4.179032823070884,
+    "drawing_seconds": 0.1155624648090452,
+    "planning_seconds": 1.1663500850554556
+  },
+  "epochs": [
+    {
+      "epoch": 1,
+      "samples": 32,
+      "elapsed_seconds": 3.803725315956399,
+      "samples_per_second": 8.412805169122471,
+      "batches_per_second": 0.5258003230701545,
+      "first_batch_seconds": 3.8027465320192277,
+      "steady_samples_per_second": 19196.06554087254,
+      "batch_latency_seconds": {
+        "p50": 1.9017900180770084,
+        "p90": 3.422555229230784,
+        "p95": 3.6126508806250057,
+        "p99": 3.7647274017403833
+      },
+      "worker_service_seconds": {
+        "p50": 3.477259384468198,
+        "p90": 3.644223447330296,
+        "p95": 3.665093955188058,
+        "p99": 3.681790361474268
+      },
+      "file_opens": 28,
+      "cache_hits": 44,
+      "peak_process_rss_bytes": 966811648,
+      "available_samples": {
+        "l3_ssh": 32,
+        "l3_swot": 32
+      }
+    },
+    {
+      "epoch": 2,
+      "samples": 32,
+      "elapsed_seconds": 1.4785511929076165,
+      "samples_per_second": 21.64280827982088,
+      "batches_per_second": 1.352675517488805,
+      "first_batch_seconds": 0.8460213269572705,
+      "steady_samples_per_second": 25.31355853485008,
+      "batch_latency_seconds": {
+        "p50": 0.7390468299854547,
+        "p90": 0.8246264275629074,
+        "p95": 0.8353238772600889,
+        "p99": 0.8438818370178341
+      },
+      "worker_service_seconds": {
+        "p50": 1.140996812027879,
+        "p90": 1.3895030176499858,
+        "p95": 1.4205662933527492,
+        "p99": 1.44541691391496
+      },
+      "file_opens": 4,
+      "cache_hits": 68,
+      "peak_process_rss_bytes": 972054528,
+      "available_samples": {
+        "l3_ssh": 32,
+        "l3_swot": 32
+      }
+    },
+    {
+      "epoch": 3,
+      "samples": 32,
+      "elapsed_seconds": 1.1278704509604722,
+      "samples_per_second": 28.37205281222629,
+      "batches_per_second": 1.7732533007641431,
+      "first_batch_seconds": 1.1258871760219336,
+      "steady_samples_per_second": 10088.93314533401,
+      "batch_latency_seconds": {
+        "p50": 0.5637365360744298,
+        "p90": 1.0134570480324328,
+        "p95": 1.069672112027183,
+        "p99": 1.1146441632229835
+      },
+      "worker_service_seconds": {
+        "p50": 1.0151875674491748,
+        "p90": 1.058572785439901,
+        "p95": 1.0639959376887418,
+        "p99": 1.0683344594878144
+      },
+      "file_opens": 0,
+      "cache_hits": 72,
+      "peak_process_rss_bytes": 973209600,
+      "available_samples": {
+        "l3_ssh": 32,
+        "l3_swot": 32
+      }
+    }
+  ],
+  "processes": {
+    "1387876": {
+      "pid": 1387876,
+      "file_opens": 16,
+      "cache_hits": 92,
+      "peak_rss_bytes": 973209600,
+      "service_seconds": 1.0694190899375826
+    },
+    "1387939": {
+      "pid": 1387939,
+      "file_opens": 16,
+      "cache_hits": 92,
+      "peak_rss_bytes": 973049856,
+      "service_seconds": 0.960956044960767
+    }
+  },
+  "memory_note": "ru_maxrss high-water mark per process (includes inherited parent memory with fork); workers=0 measures the parent."
+}

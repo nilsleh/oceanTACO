@@ -1,4 +1,5 @@
 # Byte-compiled / optimized / DLL files
+core.*
 __pycache__/
 *.py[codz]
 *$py.class
@@ -220,3 +221,16 @@ notebooks/ml_workflow_executed.ipynb
 # Ignore Markdown files outside docs/
 **/*.md
 !docs/**/*.md
+
+# Local notebook execution artifacts (never committed).  Draw records land
+# beside whatever directory the notebook runs from, which is the repository
+# root under the execution script and docs/tutorials/ under Jupyter.
+docs/tutorials/*.local.*
+docs/tutorials/draws/
+/draws/
+
+# Local release build artifacts and run scratch (never committed).
+/release/querysets/
+/logs/
+/tmp/
+/env.sh

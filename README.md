@@ -1,7 +1,7 @@
 # OceanTACO
 
 [![docs](https://app.readthedocs.org/projects/oceantaco/badge/?version=latest)](https://oceantaco.readthedocs.io/en/latest/)
-[![pypi](https://badge.fury.io/py/oceantaco.svg)](https://pypi.org/project/ocean-taco/)
+[![pypi](https://badge.fury.io/py/oceantaco.svg)](https://pypi.org/project/oceantaco/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Language: Python](https://img.shields.io/badge/language-Python%203.11%2B-green?logo=python&logoColor=green)](https://www.python.org)
 
@@ -19,6 +19,47 @@ Current dataset coverage includes:
 - Additional co-located sources including wind and GLORYS currents
 
 The Core dataset spans 2023-03-29 until 2025-08-01 and includes the SWOT data. It is available on [Hugging Face](https://huggingface.co/datasets/nilsleh/OceanTACO). The extended dataset spans 2015-01-01 until 2023-03-29 but preceeds the SWOT era and is available on [Hugging Face](https://huggingface.co/datasets/nilsleh/OceanTACO_extended).
+
+### SWOT mission phases (read this before comparing SWOT across dates)
+
+The Core dataset spans two different SWOT orbits, and `l3_swot` behaves very
+differently in each. Both regimes are routinely mistaken for broken or duplicated
+data, so check which phase your dates fall in before filing a bug.
+
+| Phase | Dates | Repeat cycle | What a fixed bounding box looks like |
+|---|---|---|---|
+| Calibration ("fast-sampling") | `2023-03-29` – `2023-07-10` | 1 day | The swath sits in the **same place every day**, so a daily animation or mosaic looks *identical* |
+| Orbit change | `2023-07-11` – `2023-07-25` | — | **No `l3_swot.nc` is published** on these dates |
+| Science | `2023-07-26` – `2025-08-02` | 21 days | The swath **moves every day**, so a small box is **empty (all-NaN) on most days** |
+
+Two consequences worth stating explicitly:
+
+- **During calibration, an unchanging picture does not mean unchanging data.** The
+  swath *footprint* repeats, but the values inside it do not: consecutive days
+  differ by roughly 0.02–0.05 m on average over a 10°x10° box, with coherent
+  mesoscale structure. Difference the days to see it.
+- **During science, most days over a small box are legitimately empty.** Revisits
+  land at lags of 0, 11 and 21/22 days (the 21-day cycle plus its ascending /
+  descending sub-cycle). All-NaN days are pixel-identical to one another, which is
+  a second, unrelated way a mosaic can appear "the same".
+
+SWOT is gridded at ~2 km with `processing = bin_mean_no_smoothing`: there is **no
+gap-filling**, so `NaN` always means "not observed here on this day", never zero.
+
+Beyond the orbit-change window, 33 dates in total publish no `l3_swot.nc` in any
+region (SWOT-wide outages): `2023-05-20/21`, `2023-07-11`–`2023-07-25`,
+`2023-09-22`–`2023-09-26`, `2023-12-23`–`2023-12-27`, `2024-05-11/12`,
+`2024-10-28`, `2025-01-11/12`, `2025-04-26/27`. Other modalities are unaffected on
+those dates.
+
+<img src="docs/images/swot_revisit_coverage.png" alt="SWOT coverage over a fixed box across both mission phases" width="900" />
+
+See [Dataset Description](https://oceantaco.readthedocs.io/en/latest/dataset_description.html)
+for the per-phase figures. To regenerate them:
+
+```sh
+python scripts/dev/swot_phase_figures.py --out docs/images
+```
 
 <img src="docs/images/oceantaco.svg" alt="OceanTACO Figure" width="760" />
 
@@ -48,16 +89,16 @@ Most users should install directly from PyPI:
 
 ```sh
 # Core package
-pip install ocean-taco
+pip install oceantaco
 
 # With Hugging Face helpers
-pip install "ocean-taco[hf]"
+pip install "oceantaco[hf]"
 ```
 
 If you want the latest development version from GitHub:
 
 ```sh
-pip install "ocean_taco[hf] @ git+https://github.com/nilsleh/oceanTACO.git@main"
+pip install "oceantaco @ git+https://github.com/nilsleh/oceanTACO.git@main"
 ```
 
 If you have cloned this repository and want a local editable install, run the following from the repository root:
@@ -84,29 +125,25 @@ pip install -e ".[generate,hf,tests]"
 - `ocean_taco/viz/`: visualization and analysis scripts.
 - `notebooks/`: tutorial and task-focused notebooks.
 
-## Dataset + Queries
+- `ocean_taco/torch/`: the shipped `OceanTACODataset`, collators, and Core loader.
+- `ocean_taco/retrieve.py`: native-coordinate catalog retrieval.
+- `ocean_taco/generate_dataset/` and `ocean_taco/viz/`: repository-only production and analysis tooling.
 
-Most users will interact with `ocean_taco/dataset/dataset.py` and `ocean_taco/dataset/queries.py`.
+ML sampling starts with a published `QuerySet`, then records an exact draw:
 
 ```python
-from ocean_taco.dataset import OceanTACODataset, QueryGenerator, PatchSize
+from ocean_taco import CatalogConfig, QuerySet, draw_queryset
+from ocean_taco.render import Resample
+from ocean_taco.torch import OceanTACODataset
 
-ds = OceanTACODataset(
-	taco_path="/path/to/OceanTACO",
-	input_variables=["l4_ssh", "l4_sst", "glorys_sss"],
-	target_variables=["l3_swot"],
-	temporal_agg="mean",
+queryset = QuerySet.from_hub(256, "eval")
+draw = draw_queryset(queryset, requested_row_count=32, seed=7, record_path="run.json")
+dataset = OceanTACODataset(
+    queries=draw,
+    sources={"l4_sst": Resample((64, 64), support_threshold=0.5)},
+    catalog_config=CatalogConfig(),
 )
-
-generator = QueryGenerator(land_mask_path=".ocean_mask_cache/land_mask.npy")
-queries = generator.generate_training_queries(
-	n_queries=32,
-	patch_size=PatchSize(1.0, "deg"),
-	date_range=("2024-01-01", "2024-01-31"),
-	max_land_fraction=0.3,
-)
-
-sample = ds[queries[0].to_geoslice()]
+sample = dataset[0]
 ```
 
 ## Patch Size from Resolution

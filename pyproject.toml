@@ -3,11 +3,11 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ocean_taco"
+name = "oceantaco"
 version = "0.1.0"
-description = "Dataset for various applications around Sea State Estimation"
+description = "Reproducible native-coordinate ocean retrieval and sampling"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { file = "LICENSE" }
 authors = [{ name = "Nils Lehmann", email = "n.lehmann@tum.de" }]
 maintainers = [{ name = "Nils Lehmann", email = "n.lehmann@tum.de" }]
@@ -18,41 +18,43 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "matplotlib>=3.10",
-    "numpy>=1.26,<2.1",
+    "numpy>=1.26,<3",
     "pandas>=2.2",
-    "requests>=2.31",
     "torch>=2.2",
     "tqdm>=4.66",
     "xarray>=2025.11.0",
+    "pyarrow>=16",
     "h5netcdf>=1.3",
     "h5py>=3.11",
     "cartopy>=0.23.0",
+    "matplotlib>=3.10",
     "tacoreader>=2.4.20",
+    "scipy>=1.12",
     "shapely>=2.0",
     "omegaconf>=2.3",
     "pydantic>=2.12.5",
     "typer>=0.12",
     "rich>=13.0",
     "geopandas>=1.0",
-    "rasterio>=1.3"
+    "rasterio>=1.3",
+    "huggingface_hub>=0.24"
 ]
 
 [project.optional-dependencies]
+hf = [
+    "datasets>=2.19",
+]
+materialize = [
+    "dask[array]>=2024.10",
+]
 generate = [
     "argopy",
     "copernicusmarine>=2.2.1",
     "tacotoolbox>=0.26.1",
-    "scipy>=1.12",
-]
-hf = [
-    "datasets>=2.19",
-    "huggingface_hub>=0.24",
 ]
 tests = [
     "pytest>=8.0",
@@ -68,25 +70,46 @@ docs = [
 benchmarks = [
     "zarr>=2.18",
 ]
+viz = [
+    "matplotlib>=3.10",
+    "cartopy>=0.23.0",
+]
+tutorials = [
+    "jupyterlab>=4.0",
+    "nbclient>=0.10",
+    "nbformat>=5.10",
+]
 
 [project.urls]
 Repository = "https://github.com/nilsleh/oceanTACO"
 Issues = "https://github.com/nilsleh/oceanTACO/issues"
 
+[tool.setuptools]
+include-package-data = false
+
 [tool.setuptools.packages.find]
 # Search from repo root (.) and include the ocean_taco package
 where = ["."]
 include = ["ocean_taco*"]
-exclude = ["tests*"]
+exclude = [
+    "ocean_taco.benchmarks*",
+    "ocean_taco.dataset*",
+    "ocean_taco.generate_dataset*",
+    "ocean_taco.test*",
+    "tests*",
+]
 
 [tool.setuptools.package-data]
-ocean_taco = ["py.typed"]
+ocean_taco = ["py.typed", "sampling/data/*.npz"]
 
 [tool.pytest.ini_options]
-addopts = "-m 'not slow'"
+addopts = "-m 'not slow and not remote'"
 filterwarnings = []
 markers = [
     "slow: marks tests as slow (requires network access; deselected by default)",
+    "local: marks tests that require the guarded local OceanTACO port (skipped when absent)",
+    "remote: marks tests that exercise the HuggingFace remote path (deselected by default)",
+    "workers: marks high-value worker-boundary regression tests",
 ]
 
 [tool.env]
@@ -106,6 +129,7 @@ skip-magic-trailing-comma = true
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
 extend-select = ["D", "I", "UP"]
+extend-ignore = ["D105", "D107"]
 
 [tool.ruff.lint.per-file-ignores]
 "docs/**" = ["D"]
