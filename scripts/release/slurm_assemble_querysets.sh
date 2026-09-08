@@ -20,7 +20,7 @@ set -euo pipefail
 
 REPO="${REPO:-/p/project1/hai_uqmethodbox/nils/oceanTACO}"
 TACO_PATH="${TACO_PATH:-/p/project1/hai_uqmethodbox/data/new_ssh_dataset_taco_folder/OceanTACO}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO}/release/querysets/v1}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO}/release/querysets}"
 
 cd "${REPO}"
 mkdir -p logs

@@ -4,6 +4,7 @@ Candidates are drawn from independently computed open ocean, never from
 positions.parquet. A published set therefore cannot certify a missing open-ocean
 region by sampling only itself.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -13,20 +14,12 @@ from pathlib import Path
 
 import numpy as np
 import pyarrow.parquet as pq
+from check_grid_coverage import open_ocean_mask
 
 from ocean_taco.geobox import PatchSize
 from ocean_taco.sampling.ocean_mask import load_released_ocean_mask
 
-from check_grid_coverage import open_ocean_mask
-
-SETS = (
-    "128-eval",
-    "256-eval",
-    "512-eval",
-    "128-training",
-    "256-training",
-    "512-training",
-)
+SETS = ("128-eval", "256-eval", "512-eval")
 
 
 def check(root: Path, draws: int = 60) -> list[str]:
@@ -78,7 +71,9 @@ def check(root: Path, draws: int = 60) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--root", type=Path, default=Path(os.environ.get("ROOT", "release/querysets/v1"))
+        "--root",
+        type=Path,
+        default=Path(os.environ.get("ROOT", "release/querysets/v2")),
     )
     parser.add_argument("--draws", type=int, default=60)
     args = parser.parse_args()

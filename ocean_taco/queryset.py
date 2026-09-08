@@ -22,7 +22,8 @@ from typing import Any
 from .catalog import CORE_DATASET_REPO_ID, CORE_DATASET_REVISION
 from .geobox import PatchSize, utc_isoformat
 
-SCHEMA_VERSION = "queryset/v1"
+SCHEMA_VERSION = "queryset/v2"
+SUPPORTED_SCHEMA_VERSIONS = frozenset({"queryset/v1", SCHEMA_VERSION})
 TABLE_FILENAMES = {
     "positions": "positions.parquet",
     "coverage": "coverage.parquet",
@@ -35,6 +36,7 @@ _HEADER_KEYS = {
     "kind",
     "grid_spacing_km",
     "grid_id",
+    "position_sampling",
     "dataset_revision",
     "catalog_sha256",
     "registry_sha256",
@@ -58,7 +60,13 @@ _HEADER_KEYS = {
 _REQUIRED_HEADER_KEYS = (
     _HEADER_KEYS
     - _NON_SEMANTIC_HEADER_KEYS
-    - {"table_sha256", "queryset_id", "coverage_rules", "grid_validation"}
+    - {
+        "table_sha256",
+        "queryset_id",
+        "coverage_rules",
+        "grid_validation",
+        "position_sampling",
+    }
 )
 _TIME_KEYS = {"anchor_time", "time_start", "time_end", "target_time", "start", "end"}
 
@@ -370,7 +378,7 @@ class QuerySet:
 
     def __post_init__(self) -> None:
         header = _normalise(dict(self.header))
-        header.setdefault("schema_version", SCHEMA_VERSION)
+        header.setdefault("schema_version", "queryset/v1")
         unknown = set(header) - _HEADER_KEYS
         if unknown:
             raise ValueError(f"QuerySet header has unknown keys: {sorted(unknown)}.")
@@ -379,7 +387,7 @@ class QuerySet:
             raise ValueError(
                 f"QuerySet header is missing required keys: {sorted(missing)}."
             )
-        if header["schema_version"] != SCHEMA_VERSION:
+        if header["schema_version"] not in SUPPORTED_SCHEMA_VERSIONS:
             raise ValueError(
                 f"Unsupported QuerySet schema {header['schema_version']!r}."
             )
@@ -389,7 +397,29 @@ class QuerySet:
         if not isinstance(size, Mapping):
             raise ValueError("QuerySet patch_size must be a PatchSize mapping.")
         PatchSize(float(size.get("value")), str(size.get("unit")))
-        if (
+        sampling = header.get("position_sampling")
+        if header["schema_version"] == SCHEMA_VERSION:
+            if not isinstance(sampling, Mapping) or not isinstance(
+                sampling.get("method"), str
+            ):
+                raise ValueError("QuerySet v2 requires position_sampling.method.")
+            if header["kind"] == "training":
+                if header["grid_spacing_km"] is not None:
+                    raise ValueError(
+                        "Stochastic training QuerySets have no grid spacing."
+                    )
+                if sampling["method"] != "stratified_best_candidate_ocean/v1":
+                    raise ValueError(
+                        "Training QuerySet has an unsupported sampling method."
+                    )
+            elif (
+                not isinstance(header["grid_spacing_km"], (float, int))
+                or header["grid_spacing_km"] <= 0
+            ):
+                raise ValueError(
+                    "Systematic eval QuerySet grid_spacing_km must be positive."
+                )
+        elif (
             not isinstance(header["grid_spacing_km"], (float, int))
             or header["grid_spacing_km"] <= 0
         ):

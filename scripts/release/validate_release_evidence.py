@@ -19,6 +19,13 @@ from typing import Any
 
 from ocean_taco.catalog import CORE_DATASET_REVISION
 from ocean_taco.queryset import QuerySet
+from ocean_taco.sampling.grids import (
+    MAX_TRAINING_IOU,
+    RANDOM_SAMPLER_METHOD,
+    STRATUM_LATITUDE_BINS,
+    STRATUM_LONGITUDE_BINS,
+)
+from ocean_taco.sampling.publish import TRAINING_SAMPLER_SEED
 
 REQUIRED_STEPS = (
     "reference_recipe",
@@ -165,7 +172,7 @@ def validate(document: Mapping[str, Any], *, root: Path) -> list[str]:
             (
                 "recipe_id",
                 "patch_sizes_km",
-                "grid_spacings",
+                "position_sampling",
                 "canonical_dates_sha256",
                 "registered_tokens",
                 "ocean_mask_id",
@@ -175,9 +182,24 @@ def validate(document: Mapping[str, Any], *, root: Path) -> list[str]:
         )
         if recipe.get("patch_sizes_km") != [128, 256, 512]:
             errors.append("reference_recipe.patch_sizes_km must be [128, 256, 512].")
-        if recipe.get("grid_spacings") != {"training": "2L/3", "eval": "0.9L"}:
+        expected_sampling = {
+            "training": {
+                "method": RANDOM_SAMPLER_METHOD,
+                "seed": TRAINING_SAMPLER_SEED,
+                "area_weight": "cosine_latitude/v1",
+                "stratification": {
+                    "latitude_equal_area_bins": STRATUM_LATITUDE_BINS,
+                    "longitude_bins": STRATUM_LONGITUDE_BINS,
+                },
+                "maximum_pair_iou": MAX_TRAINING_IOU,
+                "candidate_pool_size": 16,
+                "position_count": "80_percent_legacy_2L/3_density",
+            },
+            "eval": {"method": "equidistant_ocean/v1", "spacing": "0.9L"},
+        }
+        if recipe.get("position_sampling") != expected_sampling:
             errors.append(
-                "reference_recipe must declare the fixed training/eval grid spacings."
+                "reference_recipe must declare the stochastic training and systematic eval sampling recipes."
             )
         mask_id = recipe.get("ocean_mask_id")
     else:

@@ -25,7 +25,7 @@ set -euo pipefail
 
 REPO="${REPO:-/p/project1/hai_uqmethodbox/nils/oceanTACO}"
 TACO_PATH="${TACO_PATH:-/p/project1/hai_uqmethodbox/data/new_ssh_dataset_taco_folder/OceanTACO}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO}/release/querysets/v1}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO}/release/querysets}"
 # Worker memory, not core count, is the binding constraint: each worker holds
 # the global SWOT primary and n_obs grids plus the SSH grid.
 JOBS="${JOBS:-24}"

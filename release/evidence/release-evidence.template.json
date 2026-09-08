@@ -8,7 +8,7 @@
       "evidence": [],
       "recipe_id": "",
       "patch_sizes_km": [],
-      "grid_spacings": {},
+      "position_sampling": {},
       "canonical_dates_sha256": "",
       "registered_tokens": [],
       "ocean_mask_id": "",

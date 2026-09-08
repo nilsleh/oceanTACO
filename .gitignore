@@ -228,3 +228,9 @@ notebooks/ml_workflow_executed.ipynb
 docs/tutorials/*.local.*
 docs/tutorials/draws/
 /draws/
+
+# Local release build artifacts and run scratch (never committed).
+/release/querysets/
+/logs/
+/tmp/
+/env.sh

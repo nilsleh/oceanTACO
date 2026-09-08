@@ -2,6 +2,7 @@
 
 from datetime import UTC
 
+import numpy
 import torch
 
 from ocean_taco.geobox import TimeRange
@@ -242,8 +243,16 @@ def test_midday_stamped_daily_sources_survive_a_single_day_request():
         assert selected.sizes["time"] == 1, f"{token} dropped its midday label"
 
 
-def test_instant_sources_still_compare_against_the_exact_timestamp():
-    """The daily-label widening must not loosen selection for instant sources."""
+def test_a_requested_date_selects_the_whole_calendar_day():
+    """A date names a day, so every granule stamped inside it must be selected.
+
+    Daily gridded products disagree about where in the day they stamp their one
+    field, and L4 SST uses both conventions across the archive: drawn rows carry
+    00:00 stamps on some dates and 12:00 on others for the same product.
+    Comparing a 12:00 granule against a zero-width midnight request dropped it
+    and reported the source as structurally absent, which is indistinguishable
+    from data that is genuinely missing.
+    """
     from datetime import datetime
 
     from ocean_taco.geobox import TimeRange
@@ -253,8 +262,14 @@ def test_instant_sources_still_compare_against_the_exact_timestamp():
         start=datetime(2025, 5, 15, tzinfo=UTC),
         end=datetime(2025, 5, 15, tzinfo=UTC),
     )
-    assert _select_time_range(_daily_labelled(12), interval, "l4_sst").sizes["time"] == 0
-    assert _select_time_range(_daily_labelled(0), interval, "l4_sst").sizes["time"] == 1
+    for hour in (0, 12, 23):
+        for token in ("l4_sst", "l3_ssh", "l3_swot", "l4_ssh"):
+            selected = _select_time_range(_daily_labelled(hour), interval, token)
+            assert selected.sizes["time"] == 1, f"{token} dropped a {hour:02d}:00 stamp"
+    # A granule outside the requested day is still excluded.
+    outside = _daily_labelled(0)
+    outside = outside.assign_coords(time=[outside.time.values[0] + numpy.timedelta64(1, "D")])
+    assert _select_time_range(outside, interval, "l4_sst").sizes["time"] == 0
 
 
 def test_context_window_keeps_a_midday_label_for_a_single_day_patch():
@@ -278,7 +293,7 @@ def test_context_window_keeps_a_midday_label_for_a_single_day_patch():
     window = OceanTACODataset._context_window
     assert window(_daily_labelled(12), _Spec, get_modality("glorys_uo")).sizes["time"] == 1
     assert window(_daily_labelled(0), _Spec, get_modality("l4_sst")).sizes["time"] == 1
-    assert window(_daily_labelled(12), _Spec, get_modality("l4_sst")).sizes["time"] == 0
+    assert window(_daily_labelled(12), _Spec, get_modality("l4_sst")).sizes["time"] == 1
 
 
 def test_argo_profiles_survive_a_single_day_context_window():

@@ -39,10 +39,12 @@ from ocean_taco.sampling import (
 )
 from ocean_taco.sampling.draw import draw_queryset, replay_experiment
 from ocean_taco.sampling.grids import (
+    MAX_TRAINING_IOU,
     _longitude_spacing_bounds,
     _row_latitudes,
     _row_longitudes,
     _seam_distance_degrees,
+    build_random_position_sample,
     latitude_band_counts,
 )
 from ocean_taco.torch import CoreSourceLoader, OceanTACODataset, collate_ocean_samples
@@ -330,16 +332,52 @@ def test_constant_physical_grid_is_unweighted_trimmed_and_overlap_bounded():
     # unreachable nominal value.
     cell_fraction = 0.1 / patch.to_degrees(0.0)[1]
     worst_offset = 2.0 / 3.0 - cell_fraction
-    assert maximum_pair_iou(positions, patch) <= (1 - worst_offset) / (
-        1 + worst_offset
-    ) + 1e-12
+    assert (
+        maximum_pair_iou(positions, patch)
+        <= (1 - worst_offset) / (1 + worst_offset) + 1e-12
+    )
     assert area_share_ratios({"low": 10, "high": 20}, {"low": 1.0, "high": 2.0}) == {
         "low": 1.0,
         "high": 1.0,
     }
 
 
+def test_random_position_sample_is_seeded_unique_and_mask_valid():
+    mask = OceanMaskArtifact(
+        lat=np.arange(-3.0, 3.1, 0.1),
+        lon=np.arange(-3.0, 3.1, 0.1),
+        ocean_mask=np.ones((61, 61), dtype=bool),
+        manifest={},
+    )
+    patch = PatchSize(20.0, "km")
+    first = build_random_position_sample(
+        mask, patch_size=patch, seed=17, position_count=12
+    )
+    second = build_random_position_sample(
+        mask, patch_size=patch, seed=17, position_count=12
+    )
+    changed = build_random_position_sample(
+        mask, patch_size=patch, seed=18, position_count=12
+    )
+    assert first == second
+    assert {row["position_id"] for row in first} != {
+        row["position_id"] for row in changed
+    }
+    assert len({(row["centre_lon"], row["centre_lat"]) for row in first}) == 12
+    assert all(
+        mask.nearest(
+            np.array([row["centre_lat"]]), np.array([row["centre_lon"]])
+        ).item()
+        for row in first
+    )
+    assert maximum_pair_iou(first, patch) <= MAX_TRAINING_IOU + 1e-12
+
+
 def test_published_builder_keeps_every_position_date_without_qualification():
+    # The fixture mask is a solid all-ocean square, where the IoU ceiling binds
+    # far sooner than it does on the real mask.  An 80 km patch keeps the
+    # derived training count inside what this square can actually pack, so the
+    # test exercises the coverage-table contract rather than sampler density.
     mask = OceanMaskArtifact(
         lat=np.arange(-1.5, 1.6, 0.1),
         lon=np.arange(-1.5, 1.6, 0.1),
@@ -364,7 +402,7 @@ def test_published_builder_keeps_every_position_date_without_qualification():
     )
     queryset = build_queryset(
         ocean_mask=mask,
-        patch_size=PatchSize(20.0, "km"),
+        patch_size=PatchSize(80.0, "km"),
         kind="training",
         dates=dates,
         tokens=tokens,
@@ -389,6 +427,13 @@ def test_published_builder_keeps_every_position_date_without_qualification():
             "argo": 0,
         },
     )
+    assert queryset.header["schema_version"] == "queryset/v2"
+    assert queryset.header["grid_spacing_km"] is None
+    sampling = queryset.header["position_sampling"]
+    assert sampling["method"] == "stratified_best_candidate_ocean/v1"
+    assert sampling["seed"] == 20260907
+    assert sampling["maximum_pair_iou"] == MAX_TRAINING_IOU
+    assert sampling["position_count"] == len(queryset.positions)
     assert len(queryset.coverage) == len(queryset.positions) * len(dates)
     assert {row["argo_profile_count"] for row in queryset.coverage} == {0}
 
@@ -646,9 +691,13 @@ def test_snapped_row_spacing_never_doubles_from_rounding():
             f"latitude rows at {spacing_km} km gapped to {steps.max():.1f} km"
         )
         longitudes = _row_longitudes(mask, 0.0, spacing_km)
-        lon_steps = np.r_[
-            np.diff(longitudes), _seam_distance_degrees(longitudes[0], longitudes[-1])
-        ] * KM_PER_DEGREE_LATITUDE
+        lon_steps = (
+            np.r_[
+                np.diff(longitudes),
+                _seam_distance_degrees(longitudes[0], longitudes[-1]),
+            ]
+            * KM_PER_DEGREE_LATITUDE
+        )
         lower, upper = _longitude_spacing_bounds(mask, 0.0, spacing_km)
         assert lon_steps.min() >= lower
         assert lon_steps.max() <= upper
@@ -680,9 +729,7 @@ def test_eval_grid_footprints_tile_open_ocean_without_gaps():
     half_lat = patch_km / KM_PER_DEGREE_LATITUDE / 2.0
     for row in positions:
         centre_lat, centre_lon = row["centre_lat"], row["centre_lon"]
-        half_lon = (
-            patch_km / (KM_PER_DEGREE_LATITUDE * cos(radians(centre_lat))) / 2.0
-        )
+        half_lon = patch_km / (KM_PER_DEGREE_LATITUDE * cos(radians(centre_lat))) / 2.0
         rows = (lat >= centre_lat - half_lat) & (lat <= centre_lat + half_lat)
         cols = (lon >= centre_lon - half_lon) & (lon <= centre_lon + half_lon)
         covered[np.ix_(rows, cols)] = True
@@ -730,7 +777,9 @@ def test_canonicalise_dense_does_not_gate_on_source_units(units):
     rendered = canonicalise_dense(_dense_asset(units), get_modality("l4_sst"))
     assert rendered.shape == (1, 2, 3)
     # Values pass through untouched; only the label is normalised.
-    assert np.array_equal(np.asarray(rendered.values), np.arange(6, dtype=np.float32).reshape(1, 2, 3))
+    assert np.array_equal(
+        np.asarray(rendered.values), np.arange(6, dtype=np.float32).reshape(1, 2, 3)
+    )
     assert rendered.attrs["units"] == "degC"
 
 

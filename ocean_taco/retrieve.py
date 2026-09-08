@@ -372,7 +372,9 @@ def _crop(dataset, box: GeoBox):
         parts.append(part)
     if not box.wraps_antimeridian:
         return parts[0]
-    result = xr.concat(parts, dim="lon")
+    # Preserve xarray's current all-variable concatenation semantics across
+    # the antimeridian; spelling this out avoids a future-default change.
+    result = xr.concat(parts, dim="lon", data_vars="all")
     return result.assign_coords(lon=box.unwrap_longitudes(result["lon"].values))
 
 
@@ -447,13 +449,18 @@ def _ensure_time_dimension(dataset):
 def _select_time_range(dataset, interval: TimeRange, token: str | None = None):
     """Select the closed request interval using decoded source timestamps.
 
-    ``daily_label`` sources carry a timestamp that names a day rather than an
-    instant within it, and the products disagree about where in the day to put
-    it: GLORYS and L4 SSS stamp 12:00 while L4 SSH and L4 wind stamp 00:00.
-    Comparing those labels against an instant request silently drops the
-    12:00 sources, because a QuerySet anchor time is midnight and the request
-    interval for a single day is zero-width.  Compare on the calendar day for
-    those sources, which is the resolution the label actually carries.
+    A requested date selects the whole calendar day, 00:00 to 24:00 UTC.  Daily
+    gridded products carry one field per day but disagree about where in the day
+    to stamp it: L4 SSH and L4 wind use 00:00, GLORYS and L4 SSS use 12:00, and
+    L4 SST and the L3 altimetry products use either depending on the granule.
+    A QuerySet anchor is midnight, so a single-day request is zero-width as an
+    instant and silently drops every granule not stamped exactly at 00:00 --
+    indistinguishable from data that is genuinely absent.  Comparing on the
+    calendar day is the resolution these labels actually carry.
+
+    ``point_time`` sources are excluded: an Argo profile's surfacing time is a
+    real instant rather than a label for its day, and its own selection path
+    handles it.
     """
     import numpy as np
 
@@ -461,7 +468,7 @@ def _select_time_range(dataset, interval: TimeRange, token: str | None = None):
     times = np.asarray(data["time"].values, dtype="datetime64[ns]")
     start = np.datetime64(interval.start.replace(tzinfo=None), "ns")
     end = np.datetime64(interval.end.replace(tzinfo=None), "ns")
-    if token is not None and get_modality(token).source_time_kind == "daily_label":
+    if token is None or get_modality(token).source_time_kind != "point_time":
         times, start, end = (
             times.astype("datetime64[D]"),
             start.astype("datetime64[D]"),

@@ -100,14 +100,14 @@ def select_common_dates(
     missing = sorted(set(selected) - set(common))
     if missing:
         rendered = ", ".join(missing)
-        raise ValueError(f"--dates includes dates not shared by both QuerySets: {rendered}.")
+        raise ValueError(
+            f"--dates includes dates not shared by both QuerySets: {rendered}."
+        )
     return selected
 
 
 def build_spatial_scenarios(
-    *,
-    regions: Iterable[str] = (),
-    boxes: Iterable[SpatialScenario] = (),
+    *, regions: Iterable[str] = (), boxes: Iterable[SpatialScenario] = ()
 ) -> tuple[SpatialScenario, ...]:
     """Build the global report scenario plus requested Core tiles and boxes."""
     scenarios = [SpatialScenario("Global")]
@@ -147,11 +147,7 @@ def covered_filter(*, date: str, box: GeoBox | None = None) -> QueryFilter:
 
 
 def panel_positions(
-    queryset: QuerySet,
-    *,
-    date: str,
-    scenario: SpatialScenario,
-    require_coverage: bool,
+    queryset: QuerySet, *, date: str, scenario: SpatialScenario, require_coverage: bool
 ) -> tuple[Mapping[str, Any], ...]:
     """Select positions for one panel through the standard QueryFilter path."""
     query_filter = (
@@ -160,7 +156,9 @@ def panel_positions(
         else QueryFilter(date_start=date, date_end=date, box=scenario.box)
     )
     selected = select_queryset(queryset, query_filter)
-    return tuple(queryset.position(position_index) for position_index, _ in selected.iter_pairs())
+    return tuple(
+        queryset.position(position_index) for position_index, _ in selected.iter_pairs()
+    )
 
 
 def build_report_rows(
@@ -198,7 +196,10 @@ def build_report_rows(
     rows: list[ReportRow] = []
     for scenario in selected_scenarios:
         for set_label, queryset in (("Training", training), ("Evaluation", evaluation)):
-            for coverage_label, require_coverage in (("All positions", False), ("SWOT + SSH covered", True)):
+            for coverage_label, require_coverage in (
+                ("All positions", False),
+                ("SWOT + SSH covered", True),
+            ):
                 panels = tuple(
                     ReportPanel(
                         scenario=scenario,
@@ -227,8 +228,7 @@ def build_report_rows(
 
 
 def footprint_rectangles(
-    patch_size: PatchSize,
-    position: Mapping[str, Any],
+    patch_size: PatchSize, position: Mapping[str, Any]
 ) -> tuple[FootprintRectangle, ...]:
     """Return latitude-aware, antimeridian-split rectangles for one position."""
     footprint = patch_size.footprint(
@@ -328,10 +328,13 @@ def _add_box_outline(
 def _set_metadata(queryset: QuerySet) -> str:
     """Format the immutable spatial metadata shown in every map panel."""
     patch_size = queryset.patch_size
-    return (
-        f"patch {patch_size.value:g} {patch_size.unit}; "
-        f"grid {float(queryset.header['grid_spacing_km']):g} km"
+    sampling = queryset.header.get("position_sampling", {})
+    placement = (
+        "seeded stratified low-overlap sample"
+        if sampling.get("method") == "stratified_best_candidate_ocean/v1"
+        else f"grid {float(queryset.header['grid_spacing_km']):g} km"
     )
+    return f"patch {patch_size.value:g} {patch_size.unit}; {placement}"
 
 
 def _date_label(value: str) -> str:
@@ -408,10 +411,7 @@ def _draw_panel(
     )
 
 
-def render_report(
-    rows: Sequence[ReportRow],
-    output: Path | str,
-) -> Path:
+def render_report(rows: Sequence[ReportRow], output: Path | str) -> Path:
     """Render report rows to a PDF or PNG, returning the written path.
 
     Cartopy coastlines are drawn only when their Natural Earth shapefile is
@@ -422,7 +422,9 @@ def render_report(
         raise ValueError("Cannot render a report with no rows.")
     date_count = len(rows[0].panels)
     if date_count == 0 or any(len(row.panels) != date_count for row in rows):
-        raise ValueError("Every report row must contain the same non-empty date columns.")
+        raise ValueError(
+            "Every report row must contain the same non-empty date columns."
+        )
 
     output_path = Path(output)
     if not output_path.suffix:
@@ -460,9 +462,28 @@ def render_report(
     )
     figure.legend(
         handles=(
-            line2d([], [], color=colors["Training"], linewidth=1.2, label="Training footprint"),
-            line2d([], [], color=colors["Evaluation"], linewidth=1.2, label="Evaluation footprint"),
-            line2d([], [], color="#9ca3af", linestyle="--", linewidth=0.8, label="Core tile boundary"),
+            line2d(
+                [],
+                [],
+                color=colors["Training"],
+                linewidth=1.2,
+                label="Training footprint",
+            ),
+            line2d(
+                [],
+                [],
+                color=colors["Evaluation"],
+                linewidth=1.2,
+                label="Evaluation footprint",
+            ),
+            line2d(
+                [],
+                [],
+                color="#9ca3af",
+                linestyle="--",
+                linewidth=0.8,
+                label="Core tile boundary",
+            ),
             line2d([], [], color="#111827", linewidth=1.0, label="Selected scenario"),
         ),
         loc="lower center",
@@ -485,12 +506,7 @@ def create_report(
 ) -> Path:
     """Select and render the complete report from two published QuerySets."""
     dates = select_common_dates(training, evaluation, requested_dates)
-    rows = build_report_rows(
-        training,
-        evaluation,
-        dates=dates,
-        scenarios=scenarios,
-    )
+    rows = build_report_rows(training, evaluation, dates=dates, scenarios=scenarios)
     return render_report(rows, output)
 
 
@@ -535,7 +551,7 @@ class _WrapsAntimeridianAction(argparse.Action):
         values: Any,
         option_string: str | None = None,
     ) -> None:
-        declarations = list(getattr(namespace, "bbox") or ())
+        declarations = list(namespace.bbox or ())
         if not declarations:
             raise argparse.ArgumentError(
                 self, "must follow the --bbox declaration it modifies"
@@ -546,16 +562,32 @@ class _WrapsAntimeridianAction(argparse.Action):
                 self, "was already supplied for the preceding --bbox declaration"
             )
         declarations[-1] = (bbox, True)
-        setattr(namespace, "bbox", declarations)
+        namespace.bbox = declarations
 
 
 def _argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Create a manifest-local world-map report for training and evaluation QuerySets."
     )
-    parser.add_argument("--train", required=True, type=Path, help="Published training QuerySet directory.")
-    parser.add_argument("--eval", required=True, dest="evaluation", type=Path, help="Published evaluation QuerySet directory.")
-    parser.add_argument("--output", required=True, type=Path, help="Destination .pdf (default) or .png file.")
+    parser.add_argument(
+        "--train",
+        required=True,
+        type=Path,
+        help="Published training QuerySet directory.",
+    )
+    parser.add_argument(
+        "--eval",
+        required=True,
+        dest="evaluation",
+        type=Path,
+        help="Published evaluation QuerySet directory.",
+    )
+    parser.add_argument(
+        "--output",
+        required=True,
+        type=Path,
+        help="Destination .pdf (default) or .png file.",
+    )
     parser.add_argument(
         "--dates",
         nargs="+",

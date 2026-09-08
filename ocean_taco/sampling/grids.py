@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from hashlib import sha256
 from math import cos, radians
 from typing import Any
 
@@ -18,6 +19,26 @@ def grid_id(*, spacing_km: float, ocean_mask_id: str) -> str:
     if spacing_km <= 0:
         raise ValueError("spacing_km must be positive.")
     return f"equidistant_ocean/v1:{spacing_km:.12g}:{ocean_mask_id}"
+
+
+RANDOM_SAMPLER_METHOD = "stratified_best_candidate_ocean/v1"
+POSITION_ELIGIBILITY = "ocean_centre_and_footprint_mask_domain/v1"
+MAX_TRAINING_IOU = 0.20
+STRATUM_LATITUDE_BINS = 18
+STRATUM_LONGITUDE_BINS = 36
+CANDIDATE_POOL_SIZE = 16
+
+
+def random_grid_id(
+    *, patch_size: PatchSize, seed: int, position_count: int, ocean_mask_id: str
+) -> str:
+    """Return the identity of one seeded random ocean-position sample."""
+    if position_count < 1:
+        raise ValueError("position_count must be positive.")
+    return (
+        f"{RANDOM_SAMPLER_METHOD}:{patch_size.value:.12g}{patch_size.unit}:"
+        f"seed={seed}:count={position_count}:{ocean_mask_id}"
+    )
 
 
 def _nearest_index(axis: np.ndarray, value: float) -> int:
@@ -129,6 +150,307 @@ def footprint_in_mask_domain(
     return footprint.lat_min >= float(mask.lat[0]) and footprint.lat_max <= float(
         mask.lat[-1]
     )
+
+
+def _eligible_random_centres(
+    mask: OceanMaskArtifact, patch_size: PatchSize
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return sorted mask-cell centres admissible to the random sampler.
+
+    The released contract deliberately requires an ocean *centre* and a
+    footprint inside the classified latitude domain. It does not require an
+    all-ocean footprint: coastal context is a valid training example.
+    """
+    latitudes: list[float] = []
+    longitudes: list[float] = []
+    for lat_index, latitude in enumerate(mask.lat):
+        latitude = float(latitude)
+        if not footprint_in_mask_domain(mask, patch_size, 0.0, latitude):
+            continue
+        columns = np.flatnonzero(mask.ocean_mask[lat_index])
+        latitudes.extend([latitude] * len(columns))
+        longitudes.extend(float(mask.lon[column]) for column in columns)
+    return (
+        np.asarray(latitudes, dtype=np.float64),
+        np.asarray(longitudes, dtype=np.float64),
+    )
+
+
+def coordinate_digest(latitudes: np.ndarray, longitudes: np.ndarray) -> str:
+    """Return a stable byte digest for a latitude/longitude sequence."""
+    digest = sha256()
+    for values in (latitudes, longitudes):
+        digest.update(np.ascontiguousarray(values, dtype=np.float64).tobytes())
+    return digest.hexdigest()
+
+
+def _stratum_ids(latitudes: np.ndarray, longitudes: np.ndarray) -> np.ndarray:
+    """Assign centres to equal-area latitude/longitude strata."""
+    sine_latitude = np.sin(np.radians(latitudes))
+    lower, upper = float(sine_latitude.min()), float(sine_latitude.max())
+    latitude_bin = np.minimum(
+        ((sine_latitude - lower) / (upper - lower) * STRATUM_LATITUDE_BINS).astype(
+            np.int64
+        ),
+        STRATUM_LATITUDE_BINS - 1,
+    )
+    longitude_bin = np.minimum(
+        ((longitudes + 180.0) / 360.0 * STRATUM_LONGITUDE_BINS).astype(np.int64),
+        STRATUM_LONGITUDE_BINS - 1,
+    )
+    return latitude_bin * STRATUM_LONGITUDE_BINS + longitude_bin
+
+
+def _stratum_quotas(
+    strata: np.ndarray, weights: np.ndarray, position_count: int
+) -> np.ndarray:
+    """Apportion an exact sample count by eligible equal-area ocean support."""
+    stratum_count = STRATUM_LATITUDE_BINS * STRATUM_LONGITUDE_BINS
+    mass = np.bincount(strata, weights=weights, minlength=stratum_count)
+    ideal = position_count * mass / mass.sum()
+    quotas = np.floor(ideal).astype(np.int64)
+    remainder = position_count - int(quotas.sum())
+    active = np.flatnonzero(mass > 0)
+    order = active[np.lexsort((active, -(ideal[active] - quotas[active])))]
+    quotas[order[:remainder]] += 1
+    return quotas
+
+
+def _overlap_exceeds(
+    *,
+    longitude: float,
+    latitude: float,
+    selected: tuple[float, float],
+    patch_size: PatchSize,
+    maximum_iou: float,
+) -> bool:
+    """Whether two patch footprints overlap beyond the configured IoU ceiling."""
+    selected_longitude, selected_latitude = selected
+    width, height = patch_size.to_degrees(latitude)
+    selected_width, selected_height = patch_size.to_degrees(selected_latitude)
+    longitude_offset = ((selected_longitude - longitude + 180.0) % 360.0) - 180.0
+    longitude_overlap = max(
+        0.0,
+        min(width / 2.0, longitude_offset + selected_width / 2.0)
+        - max(-width / 2.0, longitude_offset - selected_width / 2.0),
+    )
+    latitude_overlap = max(
+        0.0,
+        min(latitude + height / 2.0, selected_latitude + selected_height / 2.0)
+        - max(latitude - height / 2.0, selected_latitude - selected_height / 2.0),
+    )
+    overlap = longitude_overlap * latitude_overlap
+    if overlap == 0.0:
+        return False
+    return (
+        overlap / (width * height + selected_width * selected_height - overlap)
+        > maximum_iou
+    )
+
+
+def random_centre_sample(
+    mask: OceanMaskArtifact, *, patch_size: PatchSize, seed: int, position_count: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Draw a stratified, best-candidate ocean-centre sample."""
+    latitudes, longitudes = _eligible_random_centres(mask, patch_size)
+    if not 0 < position_count <= len(latitudes):
+        raise ValueError("position_count must lie in [1, eligible centre count].")
+    weights = np.cos(np.radians(latitudes))
+    strata = _stratum_ids(latitudes, longitudes)
+    quotas = _stratum_quotas(strata, weights, position_count)
+    generator = np.random.Generator(np.random.PCG64(seed))
+    keys = -np.log1p(-generator.random(len(latitudes))) / weights
+    stratum_count = STRATUM_LATITUDE_BINS * STRATUM_LONGITUDE_BINS
+    stratum_orders = tuple(
+        indices[np.argsort(keys[indices], kind="stable")]
+        for indices in (np.flatnonzero(strata == value) for value in range(stratum_count))
+    )
+    cursors = np.zeros(stratum_count, dtype=np.int64)
+    buffers: list[list[int]] = [[] for _ in range(stratum_count)]
+    latitude_bucket = patch_size.to_degrees(0.0)[1]
+    longitude_bucket = max(
+        patch_size.to_degrees(float(latitude))[0]
+        for latitude in (float(latitudes[0]), float(latitudes[-1]))
+    )
+    longitude_bucket_count = max(1, int(np.ceil(360.0 / longitude_bucket)))
+    buckets: dict[tuple[int, int], list[int]] = {}
+    selected_indices: list[int] = []
+    selected_coordinates: list[tuple[float, float]] = []
+
+    def bucket_key(latitude: float, longitude: float) -> tuple[int, int]:
+        return (
+            int(np.floor((latitude - float(latitudes[0])) / latitude_bucket)),
+            int(np.floor((longitude + 180.0) / longitude_bucket))
+            % longitude_bucket_count,
+        )
+
+    def candidate_iou(index: int) -> float:
+        latitude, longitude = float(latitudes[index]), float(longitudes[index])
+        latitude_key, longitude_key = bucket_key(latitude, longitude)
+        candidate = {"centre_lon": longitude, "centre_lat": latitude}
+        maximum = 0.0
+        for nearby_latitude in range(latitude_key - 1, latitude_key + 2):
+            for longitude_offset in (-1, 0, 1):
+                for selected_index in buckets.get(
+                    (
+                        nearby_latitude,
+                        (longitude_key + longitude_offset) % longitude_bucket_count,
+                    ),
+                    (),
+                ):
+                    selected_longitude, selected_latitude = selected_coordinates[
+                        selected_index
+                    ]
+                    maximum = max(
+                        maximum,
+                        patch_iou(
+                            candidate,
+                            {
+                                "centre_lon": selected_longitude,
+                                "centre_lat": selected_latitude,
+                            },
+                            patch_size,
+                        ),
+                    )
+        return maximum
+
+    def accept(index: int) -> None:
+        latitude, longitude = float(latitudes[index]), float(longitudes[index])
+        key = bucket_key(latitude, longitude)
+        selected_indices.append(index)
+        selected_coordinates.append((longitude, latitude))
+        buckets.setdefault(key, []).append(len(selected_coordinates) - 1)
+
+    remaining = quotas.copy()
+    allocation_weight = np.maximum(quotas, 1)
+    order_lengths = np.asarray([len(order) for order in stratum_orders])
+    while int(remaining.sum()):
+        active = np.flatnonzero(remaining > 0)
+        stratum = int(
+            active[np.argmax(remaining[active] / allocation_weight[active])]
+        )
+        order = stratum_orders[stratum]
+        while (
+            len(buffers[stratum]) < CANDIDATE_POOL_SIZE
+            and cursors[stratum] < len(order)
+        ):
+            stop = min(int(cursors[stratum]) + CANDIDATE_POOL_SIZE, len(order))
+            buffers[stratum].extend(
+                int(index) for index in order[int(cursors[stratum]) : stop]
+            )
+            cursors[stratum] = stop
+        scored = [(candidate_iou(index), index) for index in buffers[stratum]]
+        valid = [item for item in scored if item[0] <= MAX_TRAINING_IOU]
+        if valid:
+            _, index = min(valid, key=lambda item: (item[0], item[1]))
+            buffers[stratum].remove(index)
+            accept(index)
+            remaining[stratum] -= 1
+            continue
+        buffers[stratum] = []
+        if cursors[stratum] < len(order):
+            continue
+        deficit = int(remaining[stratum])
+        remaining[stratum] = 0
+        destinations = np.flatnonzero(cursors < order_lengths)
+        if not len(destinations):
+            raise ValueError(
+                "The requested position count cannot satisfy the maximum training IoU "
+                f"of {MAX_TRAINING_IOU}; accepted {len(selected_indices)} of {position_count}."
+            )
+        remaining[destinations[np.arange(deficit) % len(destinations)]] += 1
+    selected = np.sort(np.asarray(selected_indices, dtype=np.int64))
+    return latitudes, longitudes, latitudes[selected], longitudes[selected]
+
+
+def random_position_sampling_metadata(
+    mask: OceanMaskArtifact, *, patch_size: PatchSize, seed: int, position_count: int
+) -> dict[str, Any]:
+    """Describe one reproducible balanced, low-overlap position sample."""
+    latitudes, longitudes, selected_latitudes, selected_longitudes = (
+        random_centre_sample(
+            mask, patch_size=patch_size, seed=seed, position_count=position_count
+        )
+    )
+    return {
+        "method": RANDOM_SAMPLER_METHOD,
+        "seed": int(seed),
+        "position_count": int(position_count),
+        "area_weight": "cosine_latitude/v1",
+        "stratification": {
+            "latitude_equal_area_bins": STRATUM_LATITUDE_BINS,
+            "longitude_bins": STRATUM_LONGITUDE_BINS,
+        },
+        "candidate_pool_size": CANDIDATE_POOL_SIZE,
+        "maximum_pair_iou": MAX_TRAINING_IOU,
+        "eligibility": POSITION_ELIGIBILITY,
+        "eligible_centre_count": len(latitudes),
+        "eligible_centres_sha256": coordinate_digest(latitudes, longitudes),
+        "selected_centres_sha256": coordinate_digest(
+            selected_latitudes, selected_longitudes
+        ),
+    }
+
+
+def build_random_position_sample(
+    mask: OceanMaskArtifact,
+    *,
+    patch_size: PatchSize,
+    seed: int,
+    position_count: int,
+    region_mask: Callable[[Any], int] | None = None,
+    static_counts: Callable[[float, float], Mapping[str, int]] | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Build one seeded, stratified low-overlap sample of eligible centres."""
+    _, _, latitudes, longitudes = random_centre_sample(
+        mask, patch_size=patch_size, seed=seed, position_count=position_count
+    )
+    identifier = random_grid_id(
+        patch_size=patch_size,
+        seed=seed,
+        position_count=position_count,
+        ocean_mask_id=mask.artifact_id,
+    )
+    rows: list[dict[str, Any]] = []
+    required = {
+        "swot_footprint_cells",
+        "swot_ocean_cells",
+        "ssh_footprint_cells",
+        "ssh_ocean_cells",
+    }
+    for latitude, longitude in zip(latitudes, longitudes, strict=True):
+        latitude, longitude = float(latitude), float(longitude)
+        counts = dict(static_counts(longitude, latitude) if static_counts else {})
+        unknown = set(counts) - required
+        if unknown:
+            raise ValueError(
+                f"static_counts returned unsupported keys: {sorted(unknown)}"
+            )
+        counts = {key: int(counts.get(key, 0)) for key in required}
+        if any(value < 0 for value in counts.values()):
+            raise ValueError("static_counts must be non-negative.")
+        if (
+            counts["swot_ocean_cells"] > counts["swot_footprint_cells"]
+            or counts["ssh_ocean_cells"] > counts["ssh_footprint_cells"]
+        ):
+            raise ValueError("static ocean cell count cannot exceed footprint count.")
+        rows.append(
+            {
+                "position_id": position_id(
+                    grid_id=identifier, centre_lon=longitude, centre_lat=latitude
+                ),
+                "centre_lon": longitude,
+                "centre_lat": latitude,
+                "region_mask": int(
+                    region_mask(patch_size.footprint(longitude, latitude))
+                    if region_mask
+                    else 0
+                ),
+                **counts,
+            }
+        )
+    rows.sort(key=lambda row: (row["centre_lat"], row["centre_lon"]))
+    return tuple({"position_index": index, **row} for index, row in enumerate(rows))
 
 
 def build_position_grid(

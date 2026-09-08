@@ -3,6 +3,7 @@
 This deliberately reads only positions.parquet. QuerySet.read would materialise
 the full coverage table, which is irrelevant to a geometric coverage check.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -86,10 +87,7 @@ def open_ocean_mask(mask, patch_size: PatchSize) -> np.ndarray:
             np.ceil(patch_size.to_degrees(float(latitude))[0] / (2.0 * lon_step))
         )
         land_cells = rectangle_sum(
-            row_start,
-            row_stop,
-            centres - half_columns,
-            centres + half_columns + 1,
+            row_start, row_stop, centres - half_columns, centres + half_columns + 1
         )
         result[row] = ocean[row] & (land_cells == 0)
     return result
@@ -119,14 +117,7 @@ def check(root: Path) -> list[str]:
     ocean_cells = int(mask.ocean_mask.sum())
     failures = []
     open_ocean_by_patch: dict[PatchSize, np.ndarray] = {}
-    for name in (
-        "128-eval",
-        "256-eval",
-        "512-eval",
-        "128-training",
-        "256-training",
-        "512-training",
-    ):
+    for name in ("128-eval", "256-eval", "512-eval"):
         directory = root / name
         header = json.loads((directory / "header.json").read_text(encoding="utf-8"))
         patch_size = PatchSize(
@@ -160,7 +151,7 @@ def main() -> int:
     parser.add_argument(
         "--root",
         type=Path,
-        default=Path(os.environ.get("ROOT", "release/querysets/v1")),
+        default=Path(os.environ.get("ROOT", "release/querysets/v2")),
     )
     args = parser.parse_args()
     failures = check(args.root)

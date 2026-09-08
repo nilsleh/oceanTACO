@@ -9,7 +9,7 @@
 #SBATCH --error=logs/checks-%j.err
 set -euo pipefail
 REPO="${REPO:-/p/project1/hai_uqmethodbox/nils/oceanTACO}"
-ROOT="${ROOT:-release/querysets/v1}"
+ROOT="${ROOT:-release/querysets/v2}"
 cd "${REPO}"
 source venv_oceantaco/activate.sh
 

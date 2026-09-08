@@ -29,7 +29,7 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -38,7 +38,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from queryset_build import (  # noqa: E402
+from queryset_build import (
     COVERAGE_KEY,
     DENSE_TOKENS,
     POINT_TOKEN,
@@ -55,18 +55,18 @@ from queryset_build import (  # noqa: E402
     scatter_tiles,
 )
 
-from ocean_taco.catalog import CatalogConfig, load_catalog  # noqa: E402
-from ocean_taco.geobox import PatchSize, utc_isoformat  # noqa: E402
-from ocean_taco.queryset import QuerySet, content_sha256  # noqa: E402
-from ocean_taco.registry import get_modality, registry_sha256  # noqa: E402
-from ocean_taco.retrieve import REGION_BIT, REGIONS, _clean_swot, _url_from_row  # noqa: E402
-from ocean_taco.sampling.coverage import unavailable_dense_coverage  # noqa: E402
-from ocean_taco.sampling.grids import (  # noqa: E402
-    build_position_grid,
-    latitude_band_counts,
+from ocean_taco.catalog import CatalogConfig, load_catalog
+from ocean_taco.geobox import PatchSize, utc_isoformat
+from ocean_taco.queryset import QuerySet, content_sha256
+from ocean_taco.registry import get_modality, registry_sha256
+from ocean_taco.retrieve import REGION_BIT, REGIONS, _clean_swot, _url_from_row
+from ocean_taco.sampling.grids import latitude_band_counts
+from ocean_taco.sampling.ocean_mask import load_released_ocean_mask
+from ocean_taco.sampling.publish import (
+    GRID_SPACING_RATIO,
+    build_positions,
+    build_queryset,
 )
-from ocean_taco.sampling.ocean_mask import load_released_ocean_mask  # noqa: E402
-from ocean_taco.sampling.publish import GRID_SPACING_RATIO, build_queryset  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUILD_TOKENS: tuple[str, ...] = ("argo", "l3_ssh", "l3_swot")
@@ -211,7 +211,11 @@ def catalog_dates(catalog) -> list[str]:
     """Return every catalog date as an ISO ``YYYY-MM-DD`` string."""
     frame = catalog.flatten() if hasattr(catalog, "flatten") else catalog
     column = None
-    for candidate in ("l0:stac:time_start", "l1:istac:time_start", "l2:istac:time_start"):
+    for candidate in (
+        "l0:stac:time_start",
+        "l1:istac:time_start",
+        "l2:istac:time_start",
+    ):
         if candidate in frame.columns:
             column = candidate
             break
@@ -374,23 +378,16 @@ def build_sets(
     patch_sizes: Sequence[int],
     kinds: Sequence[str],
 ) -> dict[tuple[int, str], dict[str, Any]]:
-    """Build every position grid with its per-token crop plans.
-
-    ``build_position_grid`` invokes ``static_counts(lon, lat)`` with no index,
-    so the grid is built once bare to learn the centres, the plans are built
-    from those centres, and a second identical call consumes them through a
-    memoised lookup.  Both calls are deterministic; the row order is asserted
-    to match rather than assumed.
-    """
+    """Build every position set with its per-token crop plans."""
     result: dict[tuple[int, str], dict[str, Any]] = {}
     for size in patch_sizes:
         patch_size = PatchSize(float(size), "km")
         for kind in kinds:
             spacing = patch_size.value * GRID_SPACING_RATIO[kind]
-            bare = build_position_grid(
+            bare = build_positions(
                 ocean_mask,
                 patch_size=patch_size,
-                spacing_km=spacing,
+                kind=kind,
                 region_mask=region_mask_value,
                 static_counts=None,
             )
@@ -412,21 +409,13 @@ def build_sets(
                     entry[f"{prefix}_footprint_cells"] = plan.footprint_cells
                     entry[f"{prefix}_ocean_cells"] = plan.ocean_cells
                 counts[(lon, lat)] = entry
-            positions = build_position_grid(
-                ocean_mask,
-                patch_size=patch_size,
-                spacing_km=spacing,
-                region_mask=region_mask_value,
-                static_counts=lambda lon, lat: counts[(float(lon), float(lat))],
+            positions = tuple(
+                {
+                    **row,
+                    **counts[(float(row["centre_lon"]), float(row["centre_lat"]))],
+                }
+                for row in bare
             )
-            if len(positions) != len(bare) or any(
-                left["position_id"] != right["position_id"]
-                for left, right in zip(positions, bare, strict=True)
-            ):
-                raise ValueError(
-                    "build_position_grid is not deterministic across calls; "
-                    "static_counts alignment cannot be trusted."
-                )
             result[(size, kind)] = {
                 "patch_size": patch_size,
                 "spacing_km": spacing,
@@ -570,10 +559,7 @@ def write_shard(
     os.replace(temporary, path)
     sidecar = path.with_suffix(".done.json")
     sidecar.write_text(
-        json.dumps(
-            {"plan_id": plan_id, "sha256": _file_digest(path)},
-            sort_keys=True,
-        ),
+        json.dumps({"plan_id": plan_id, "sha256": _file_digest(path)}, sort_keys=True),
         encoding="utf-8",
     )
     return path
@@ -628,9 +614,7 @@ def _worker_init(config: dict[str, Any]) -> None:
     _WORKER["mask"] = mask
     _WORKER["catalog"] = catalog
     _WORKER["grids"] = grids
-    _WORKER["sets"] = build_sets(
-        mask, grids, config["patch_sizes"], config["kinds"]
-    )
+    _WORKER["sets"] = build_sets(mask, grids, config["patch_sizes"], config["kinds"])
     _WORKER["config"] = config
 
 
@@ -640,11 +624,7 @@ def _worker_measure(date: str) -> tuple[str, str, float]:
     plan_id = config["plan_id"]
     assets = date_assets(_WORKER["catalog"], date)
     if shard_is_valid(
-        work_dir,
-        date,
-        plan_id,
-        assets=assets,
-        asset_identity=config["asset_identity"],
+        work_dir, date, plan_id, assets=assets, asset_identity=config["asset_identity"]
     ):
         return date, "skipped", 0.0
     started = time.time()
@@ -812,7 +792,7 @@ def assemble_set(
         static_counts=lambda lon, lat: static[(float(lon), float(lat))],
         region_mask=region_mask_value,
     )
-    queryset.write(output_root / name)
+    queryset.write(output_root / "v2" / name)
     return queryset
 
 
@@ -827,9 +807,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, default=None)
     parser.add_argument(
-        "--stage",
-        choices=("plan", "measure", "assemble", "all"),
-        default="all",
+        "--stage", choices=("plan", "measure", "assemble", "all"), default="all"
     )
     parser.add_argument("--patch-size", type=int, action="append", dest="patch_sizes")
     parser.add_argument("--kind", action="append", dest="kinds")
@@ -920,7 +898,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     names = [f"{size}-{kind}" for size in args.patch_sizes for kind in args.kinds]
     if args.stage in {"assemble", "all"}:
-        existing = [name for name in names if (args.output_root / name).exists()]
+        existing = [name for name in names if (args.output_root / "v2" / name).exists()]
         if existing:
             raise SystemExit(
                 "Refusing to overwrite published QuerySet directories: "
@@ -1087,7 +1065,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     manifest = {
-        "built_at": utc_isoformat(datetime.now(timezone.utc)),
+        "built_at": utc_isoformat(datetime.now(UTC)),
         "taco_path": str(args.taco_path),
         "dates": dates,
         "patch_sizes": args.patch_sizes,
