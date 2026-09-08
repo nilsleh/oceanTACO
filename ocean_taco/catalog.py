@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 CORE_DATASET_REPO_ID = "nilsleh/OceanTACO"
-CORE_DATASET_REVISION = "4a3233f8f0d0a38bb85d8122043c9ffd3b772196"
+CORE_DATASET_REVISION = "d4d6eede189819347a760a87c4d047c8e5bafd52"
 
 
 @dataclass(frozen=True, slots=True)
