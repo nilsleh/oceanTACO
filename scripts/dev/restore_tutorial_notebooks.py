@@ -16,8 +16,14 @@ import nbformat as nbf
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs" / "tutorials"
 
-def md(text): return nbf.v4.new_markdown_cell(dedent(text).strip())
-def code(text): return nbf.v4.new_code_cell(dedent(text).strip())
+
+def md(text):
+    return nbf.v4.new_markdown_cell(dedent(text).strip())
+
+
+def code(text):
+    return nbf.v4.new_code_cell(dedent(text).strip())
+
 
 SETUP = """
 import os
@@ -43,10 +49,15 @@ def display_figure(fig):
     buffer = BytesIO()
     fig.savefig(buffer, format="png", dpi=144, bbox_inches="tight")
     display(Image(data=buffer.getvalue()))
+    import matplotlib.pyplot as plt
+    plt.close(fig)
 
 PATCH_SIZE_KM = 256          # the published patch size
 REQUESTED_ROWS = 4
 SEED = 7
+QUERYSET_REVISION = "d4d6eede189819347a760a87c4d047c8e5bafd52"
+TRAINING_POSITION_COUNTS = {128: 35_000, 256: 8_800, 512: 2_170}
+TRAINING_MAXIMUM_PAIR_IOU = 0.20
 
 # Draw records are notebook output, not cached data; they land beside the notebook.
 DRAW_DIR = Path("draws")
@@ -57,9 +68,9 @@ LOAD = """
 from ocean_taco import CatalogConfig, QuerySet
 from ocean_taco.retrieve import load_hf_dataset
 
-config = CatalogConfig()
+config = CatalogConfig(revision=QUERYSET_REVISION)
 catalog = load_hf_dataset(config)
-queryset = QuerySet.from_hub(PATCH_SIZE_KM, "eval")
+queryset = QuerySet.from_hub(PATCH_SIZE_KM, "eval", revision=QUERYSET_REVISION)
 print(f"queryset_id={queryset.queryset_id}; kind={queryset.header['kind']}; positions={len(queryset.positions)}; dates={len(queryset.dates)}")
 """
 
@@ -68,7 +79,9 @@ print(f"queryset_id={queryset.queryset_id}; kind={queryset.header['kind']}; posi
 # generated source stays byte-identical to the reviewed version.
 PLOTTING = """
 import matplotlib.pyplot as plt
+plt.ioff()
 import numpy as np
+from math import cos, radians
 
 # One diverging colormap across these tutorials, with an explicit range per
 # source. RdBu_r centres its white on the midpoint of whatever range it is
@@ -81,7 +94,11 @@ CMAP = "RdBu_r"
 # A range far wider than one patch's own spread would flatten that patch to a
 # single shade, so these are kept as tight as cross-panel comparison allows.
 COLOR_RANGE = {
-    "l4_sst": (20.0, 28.0),        # degrees celsius
+    # Measured over drawn rows across the whole tutorial box, which reaches 45N
+    # and therefore spans winter mid-latitudes as well as the tropics. A range
+    # of 20-28 was calibrated on subtropical rows alone and clipped half of
+    # every draw to a single flat shade.
+    "l4_sst": (2.0, 32.0),         # degrees celsius
     "l4_ssh": (-0.5, 0.5),         # metres
     "l3_swot": (-0.5, 0.5),        # metres
     "l3_ssh": (-0.5, 0.5),         # metres, nadir altimetry, same quantity as l3_swot
@@ -91,10 +108,58 @@ COLOR_RANGE = {
     "argo_temp": (0.0, 30.0),      # degrees celsius
 }
 
+# The physical quantity each source carries, so a panel can name what it shows
+# and a colourbar can be labelled rather than left as bare numbers.
+UNITS = {
+    "l4_sst": "degC",
+    "l4_ssh": "m",
+    "l3_swot": "m",
+    "l3_ssh": "m",
+    "l4_sss": "PSU",
+    "velocity": "m/s",
+    "speed": "m/s",
+    "argo_temp": "degC",
+}
+
+QUANTITY = {
+    "l4_sst": "sea surface temperature",
+    "l4_ssh": "sea surface height anomaly",
+    "l3_swot": "sea surface height anomaly",
+    "l3_ssh": "sea surface height anomaly",
+    "l4_sss": "sea surface salinity",
+    "velocity": "current velocity component",
+    "speed": "current speed",
+    "argo_temp": "temperature",
+}
+
 def color_limits(key):
     # Fall back to autoscaling for anything without a declared range.
     low, high = COLOR_RANGE.get(key, (None, None))
     return {"vmin": low, "vmax": high}
+
+def source_label(token, shape=None):
+    # "l4_sst 45x51 [degC]" -- the variable, what it measures, and its units,
+    # so no panel depends on the surrounding prose to say what it holds.
+    unit = UNITS.get(token)
+    parts = [token]
+    if shape is not None:
+        parts.append(f"{shape[0]}x{shape[1]}")
+    return " ".join(parts) + (f" [{unit}]" if unit else "")
+
+def colorbar_label(token):
+    quantity, unit = QUANTITY.get(token), UNITS.get(token)
+    if quantity and unit:
+        return f"{quantity} [{unit}]"
+    return QUANTITY.get(token) or (f"[{unit}]" if unit else "")
+
+def add_colorbar(fig, drawn, axes, token, shrink=.7):
+    # Every figure states its range rather than leaving the reader to infer it
+    # from the colours, so two figures of the same field are comparable.
+    bar = fig.colorbar(drawn, ax=axes, shrink=shrink, label=colorbar_label(token))
+    low, high = COLOR_RANGE.get(token, (None, None))
+    if low is not None:
+        bar.set_ticks(np.linspace(low, high, 5))
+    return bar
 
 # Coastlines come from the Natural Earth shapefiles that ship with cartopy and
 # are read from its local cache, so drawing them needs no network access while
@@ -153,6 +218,15 @@ def geographic_extent(record):
     lat = np.asarray(record["lat"]).ravel()
     return (float(lon.min()), float(lon.max()), float(lat.min()), float(lat.max()))
 
+def map_aspect(extent):
+    # Degrees of longitude are shorter than degrees of latitude away from the
+    # equator, so a patch is not square in degrees. Passing this to imshow
+    # keeps the panel and its coastlines in true proportion; aspect="auto"
+    # would stretch both to fill whatever box the subplot happens to have.
+    lon_min, lon_max, lat_min, lat_max = extent
+    mid = radians((lat_min + lat_max) / 2)
+    return 1.0 / max(cos(mid), 1e-6)
+
 def batch_member(batch, token, index):
     # One sample's worth of a collated batch, in the shape the single-record
     # helpers above already accept. Collation stacks the grid vectors as
@@ -198,15 +272,15 @@ def batch_panel_grid(batch, token, columns=4, day=0, title=None, panel_title=Non
         # a value, so a sparse source reads as sparse.
         shown = np.where(np.asarray(record["valid_mask"])[day], field, np.nan)
         drawn = axis.imshow(shown, origin="lower", cmap=CMAP, interpolation="nearest",
-                            aspect="auto", extent=extent, **limits)
+                            aspect=map_aspect(extent), extent=extent, **limits)
         if show_coastlines:
             add_coastlines(axis)
     for axis in flat[count:]:
         axis.axis("off")
     if drawn is not None:
-        fig.colorbar(drawn, ax=axes.ravel().tolist(), shrink=.6)
-    if title:
-        fig.suptitle(title)
+        add_colorbar(fig, drawn, axes.ravel().tolist(), token, shrink=.6)
+    heading = f"{title} -- {source_label(token)}" if title else source_label(token)
+    fig.suptitle(heading, fontsize=11)
     return fig
 
 def batch_dates(batch):
@@ -218,11 +292,31 @@ def batch_dates(batch):
 
 
 def write(name, cells):
-    notebook = nbf.v4.new_notebook(cells=cells, metadata={"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}, "language_info": {"name": "python"}})
+    if name == "ml_dataset.ipynb":
+        for cell in cells:
+            if cell.cell_type == "code":
+                cell.source = "\n".join(
+                    line for line in cell.source.splitlines()
+                    if not line.lstrip().startswith("#")
+                )
+    notebook = nbf.v4.new_notebook(
+        cells=cells,
+        metadata={
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3",
+            },
+            "language_info": {"name": "python"},
+        },
+    )
     nbf.write(notebook, OUT / name)
 
-write("ml_dataset.ipynb", [
-    md("""# From a published QuerySet to a rendered sample
+
+write(
+    "ml_dataset.ipynb",
+    [
+        md("""# From a published QuerySet to a rendered sample
 
 Satellite and in-situ platforms observe the ocean with different sampling
 geometries. Over one 256 km patch, a gridded L4 analysis provides a complete
@@ -268,15 +362,17 @@ part:
 **Prerequisites:** familiarity with the PyTorch `Dataset` and `DataLoader`
 interfaces. No oceanography background is assumed, and the domain facts that
 matter are stated where they are used."""),
-    md("""## 1. Setup
+        md("""## 1. Setup
 
-The three constants below are the only inputs this notebook takes.
-`CatalogConfig()` carries a pinned catalog revision, and `QuerySet.from_hub`
-fetches a published QuerySet by patch size and kind. Loading the QuerySet
-verifies every table against the checksums in its header, so a successful load
-doubles as the integrity check."""),
-    code(SETUP), code(PLOTTING), code(LOAD),
-    md("""## 2. Geography comes before pixels
+The four constants below select the patch size, draw size, seed, and immutable
+dataset revision. `CatalogConfig()` and `QuerySet.from_hub` use that same revision,
+so anyone can fetch the eval and training QuerySets without a local checkout.
+Loading verifies every table against the checksums in its header, so a successful
+load is also an integrity check."""),
+        code(SETUP),
+        code(PLOTTING),
+        code(LOAD),
+        md("""## 2. Geography comes before pixels
 
 Fixed channel shapes make batches stack and keep architectures simple, while
 resampling a sparse swath onto a coarse grid discards the fine-scale structure
@@ -342,7 +438,7 @@ structurally absent for that row, which §5 covers.
 buys fidelity at the cost of per-source encoders or an explicit fusion step.
 `Resample` everywhere gives uniform channels and pays interpolation. The
 [renderer reference](ml_configuration_cookbook.ipynb) works through both."""),
-    code("""
+        code("""
 from ocean_taco import PatchSize
 patch = PatchSize(PATCH_SIZE_KM, "km")
 latitudes = [0, 30, 45, 60]
@@ -354,18 +450,25 @@ plt.title(f"{PATCH_SIZE_KM} km patch: latitude-aware longitude span")
 display_figure(plt.gcf())
 print(dict(zip(latitudes, map(lambda x: round(x, 2), widths))))
 """),
-    md("""## 3. The training and eval sets
+        md("""## 3. The training and eval sets
 
 Two QuerySets are published per patch size, and they differ in how their
-positions were placed. Training positions are placed stochastically, which
-samples ocean conditions without imposing a lattice and lets the set grow later
-without re-planning a grid. Eval positions sit on a systematic grid, which
-makes coverage uniform so that a metric averaged over them is a spatial average
-rather than one weighted by wherever a sampler happened to concentrate. The
+positions were placed. Training positions are a seeded, stratified best-candidate
+random sample of eligible ocean-mask cells. An 18 × 36 equal-area global
+stratification assigns each ocean region a share of the training density; candidate
+centres use cosine-latitude area weights. Every stored centre is ocean and its full
+patch remains within the mask domain, while coastal context remains eligible. For
+each selection the sampler considers a pool of 16 candidates and keeps the best
+acceptable one; no retained footprint overlaps a selected footprint by more than
+0.20 IoU. The target counts are 35,000 positions at 128 km, 8,800 at 256 km, and
+2,170 at 512 km.
+Eval positions sit on a systematic grid, which makes coverage uniform so that a
+metric averaged over them is a spatial average rather than one weighted by
+wherever a sampler happened to concentrate. The
 `kind` field records which of the two a QuerySet is, taking the value
 `"training"` or `"eval"`.
 
-At global scale the two are hard to tell apart, since 11001 training and 6027
+At global scale the two are hard to tell apart, since 8800 training and 6027
 eval positions both cover the whole ocean. The difference lies in local
 spacing, so the second row of the figure below draws a few degrees of the North
 Atlantic box, with each stored position expanded to the 256 km footprint the
@@ -373,11 +476,12 @@ query actually covers. Drawing footprints rather than centres shows how much
 ocean one query spans and where neighbouring queries overlap, neither of which
 a dimensionless point can show.
 
-Both placements sit on regular rows of latitude, because patch height in
-degrees does not depend on longitude. Along those rows they differ: the eval
-footprints repeat at a fixed longitude step, while the training footprints are
-offset row by row and pack more densely, so they overlap more often. The cell
-below counts the positions in the box directly.
+The training centres do not follow latitude rows or a longitude lattice. Their
+seed, candidate-pool size, and hard IoU ceiling are stored in the QuerySet header,
+so the random sample is reproducible. Eval centres retain their regular physical
+spacing.
+The cell below reports the local counts without claiming a shared row
+structure.
 
 **A QuerySet kind carries no guarantee that training and eval samples are
 independent.** Both
@@ -392,14 +496,18 @@ defensible axis, because ocean fields are strongly correlated in space over the
 scales one patch covers. The
 [ML use cases notebook](spatio_temporal_query_generation.ipynb) works through
 the query construction that follows from this."""),
-    code("""
+        code("""
 from ocean_taco import GeoBox, QueryFilter, select_queryset
-training = QuerySet.from_hub(PATCH_SIZE_KM, "training")
+training = QuerySet.from_hub(PATCH_SIZE_KM, "training", revision=QUERYSET_REVISION)
+training_sampling = training.header["position_sampling"]
+assert len(training.positions) == TRAINING_POSITION_COUNTS[PATCH_SIZE_KM]
+assert training_sampling["method"] == "stratified_best_candidate_ocean/v1"
+assert training_sampling["maximum_pair_iou"] == TRAINING_MAXIMUM_PAIR_IOU
 evaluation = queryset
 split_box = GeoBox(-80, -30, 10, 45)
 train_rows = select_queryset(training, QueryFilter(box=split_box))
 eval_rows = select_queryset(evaluation, QueryFilter(box=split_box))
-print(f"training kind={training.header['kind']}, positions={len(training.positions)}, candidates in box={train_rows.count}")
+print(f"training kind={training.header['kind']}, positions={len(training.positions)}, candidates in box={train_rows.count}, sampler={training_sampling['method']}, max IoU={training_sampling['maximum_pair_iou']:.2f}, id={training.queryset_id[:12]}")
 print(f"eval     kind={evaluation.header['kind']}, positions={len(evaluation.positions)}, candidates in box={eval_rows.count}")
 print(f"both sets span the same {len(training.dates)} published dates: {len(training.dates) == len(evaluation.dates)}")
 for label, source in (("training", training), ("eval", evaluation)):
@@ -410,17 +518,17 @@ for label, source in (("training", training), ("eval", evaluation)):
     rows = np.unique(np.round(lats[inside], 3))
     print(f"  {label:8s} in box: {int(inside.sum()):4d} positions on {len(rows):3d} latitude rows, "
           f"{len(np.unique(np.round(lons[inside], 3))):4d} distinct longitudes")
-print("Shared latitude rows, different longitude placement: the eval longitudes repeat, the training ones do not.")
+print("Training centres use seeded stratified best-candidate sampling with a 0.20 IoU cap; eval centres follow a systematic grid.")
 print("A kind records how positions were placed. It does not separate the two sets in space or time.")
 """),
-    code("""
+        code("""
 # Top row: the whole ocean, where the two placements are hard to tell apart.
 # Bottom row: query footprints in a few degrees of the North Atlantic, drawn at
 # the size the patch actually covers rather than as dimensionless centres.
 FOOTPRINT_BOX = GeoBox(-60, -52, 28, 34)
 patch = PatchSize(PATCH_SIZE_KM, "km")
 fig, axes = plt.subplots(2, 2, figsize=(11, 7.8))
-sets = (("training set (stochastic)", training, "#2474a6"),
+sets = (("training set (best-candidate, IoU ≤ 0.20)", training, "#2474a6"),
         ("eval set (systematic)", evaluation, "#238b45"))
 for column, (label, source, colour) in enumerate(sets):
     lons = np.array([p["centre_lon"] for p in source.positions])
@@ -428,9 +536,9 @@ for column, (label, source, colour) in enumerate(sets):
     # Marker size and opacity suit the global panels, which carry thousands of
     # points: one setting for both rows would smear these into a solid block.
     axes[0, column].scatter(lons, lats, s=.6, alpha=.35, color=colour, linewidths=0, rasterized=True)
-    axes[0, column].add_patch(plt.Rectangle((split_box.lon_min, split_box.lat_min),
-                                            split_box.lon_max - split_box.lon_min,
-                                            split_box.lat_max - split_box.lat_min,
+    axes[0, column].add_patch(plt.Rectangle((FOOTPRINT_BOX.lon_min, FOOTPRINT_BOX.lat_min),
+                                            FOOTPRINT_BOX.lon_max - FOOTPRINT_BOX.lon_min,
+                                            FOOTPRINT_BOX.lat_max - FOOTPRINT_BOX.lat_min,
                                             fill=False, edgecolor="#d95f02", linewidth=1.6))
     axes[0, column].set(title=f"{label}: {len(lons)} positions", xlabel="longitude [°]",
                         ylabel="latitude [°]", xlim=(-180, 180), ylim=(-90, 90))
@@ -441,6 +549,7 @@ for column, (label, source, colour) in enumerate(sets):
     # footprint() is the same call the library uses to turn a centre into the
     # box a query covers, so these rectangles are the queries themselves.
     footprints = [patch.footprint(lon, lat) for lon, lat in zip(lons[inside], lats[inside])]
+    latitude_levels = len(np.unique(np.round(lats[inside], 3)))
     for box in footprints:
         axes[1, column].add_patch(plt.Rectangle((box.lon_min, box.lat_min),
                                                 box.lon_max - box.lon_min,
@@ -449,7 +558,7 @@ for column, (label, source, colour) in enumerate(sets):
     axes[1, column].scatter(lons[inside], lats[inside], s=7, color=colour, zorder=3)
     # Limits come from the footprints rather than from the selection box, so no
     # rectangle is cut off at the edge and every overlap stays visible.
-    axes[1, column].set(title=f"{len(footprints)} query footprints, {PATCH_SIZE_KM} km each",
+    axes[1, column].set(title=f"{len(footprints)} footprints; {latitude_levels} latitude levels",
                         xlabel="longitude [°]", ylabel="latitude [°]",
                         xlim=(min(b.lon_min for b in footprints) - .4, max(b.lon_max for b in footprints) + .4),
                         ylim=(min(b.lat_min for b in footprints) - .4, max(b.lat_max for b in footprints) + .4))
@@ -459,18 +568,19 @@ for axis in axes.ravel():
 fig.suptitle("Published positions, and the area the queries at those positions cover")
 fig.tight_layout()
 display_figure(fig)
+print(f"global outline and footprint zoom: lon {FOOTPRINT_BOX.lon_min} to {FOOTPRINT_BOX.lon_max}, lat {FOOTPRINT_BOX.lat_min} to {FOOTPRINT_BOX.lat_max}")
 lon_span, lat_span = patch.to_degrees(centre_lat=31.0)
 print(f"At 31°N a {PATCH_SIZE_KM} km patch spans {lon_span:.2f}° of longitude and {lat_span:.2f}° of latitude.")
 print("Each rectangle is a stored patch centre expanded to its footprint. No observation has been fetched yet.")
 """),
-    md("""## 4. A draw, and the sample it renders
+        md("""## 4. A draw, and the sample it renders
 
 The dataset needs specific rows, so this section draws four of them from the
 box above and writes the selection to a record. `replay_experiment` reads that
 record back and reproduces the same rows, so a rendered batch can be recovered
 later. The [deep-dive](data_retrieval_workflows.ipynb) covers
 filters and draws in full, and the four rows here are what §5 renders."""),
-    code("""
+        code("""
 from ocean_taco import draw_queryset, replay_experiment
 selection = QueryFilter(box=split_box)
 draw = draw_queryset(queryset, requested_row_count=REQUESTED_ROWS, seed=SEED,
@@ -481,7 +591,7 @@ for row in draw.rows:
     print(f"  ({row['centre_lon']:7.2f}, {row['centre_lat']:6.2f}) on {row['anchor_time'][:10]}  patch={row['patch_id'][:12]}")
 print(f"inclusion_probability={draw.inclusion_probability:.6g}; record={DRAW_DIR / 'ml-dataset-draw.json'}")
 """),
-    md("""## 5. The sample schema, and one rendered source
+        md("""## 5. The sample schema, and one rendered source
 
 `dataset[i]` returns a flat dict keyed by source token, plus a `query` entry
 carrying the `PatchSpec` that produced it and an `availability` entry with one
@@ -517,7 +627,7 @@ a 256 km patch, so this upsamples, and the library emits a warning saying so.
 The upsampling here serves a figure at display resolution. Meanwhile §2's
 `native_shape` is preserved in the payload, so the raw pixel count the data
 carries remains available."""),
-    code("""
+        code("""
 from ocean_taco.render import Resample
 from ocean_taco.torch import OceanTACODataset
 dataset = OceanTACODataset(queries=draw, sources={
@@ -531,7 +641,7 @@ for key, value in sample.items():
     else:
         print(key, value)
 """),
-    code("""
+        code("""
 from ocean_taco.plot import plot_ocean_sample
 # This figure stands alone rather than beside a second panel, so the colour
 # range is taken from the patch itself. One open-ocean patch spans well under a
@@ -548,7 +658,7 @@ display_figure(artist.axes.figure)
 print(f"native shape before resampling: {tuple(sample['l4_sst']['native_shape'])}")
 print(f"this patch spans {low:.2f} to {high:.2f} degC, a range of {high - low:.2f} degC")
 """),
-    md("""## 6. Collation, native shapes, and workers
+        md("""## 6. Collation, native shapes, and workers
 
 `collate_ocean_samples` is the collate function a `DataLoader` needs, and it
 **collates availability separately from values**. A source absent for one batch
@@ -572,7 +682,7 @@ demonstrates in a running loop.
 
 **No implicit normalisation.** The loader returns decoded values in their
 recorded units and neither centres, scales, nor fills them. §7 covers why."""),
-    code("""
+        code("""
 from torch.utils.data import DataLoader
 from ocean_taco.torch import collate_ocean_samples
 loader = DataLoader(dataset, batch_size=2, num_workers=0, collate_fn=collate_ocean_samples)
@@ -581,7 +691,7 @@ print("batch l4_sst", tuple(batch["l4_sst"]["data"].shape))
 print("availability", batch["availability"])
 print("valid cells", int(batch["l4_sst"]["valid_mask"].sum()))
 """),
-    md("""## 7. Normalisation, and what to persist
+        md("""## 7. Normalisation, and what to persist
 
 Normalisation happens here rather than in the loader, and it goes through
 `valid_mask` so that invalid cells stay NaN. Averaging the raw array instead
@@ -590,7 +700,7 @@ batch. The statistics belong to the experiment, so compute them once over the
 training set and hold them fixed. Recomputing them per batch would instead make
 the normalisation of a sample depend on which other samples it was batched
 with."""),
-    code("""
+        code("""
 import torch
 def normalise_valid(data, valid_mask, mean, std):
     # Normalise only where the mask is true, so invalid cells stay NaN rather
@@ -607,7 +717,7 @@ print(f"source mean={mean:.3f} std={std:.3f} over {int(mask.sum())} valid cells"
 print(f"normalised mean={normalised[mask].mean():.3e} std={normalised[mask].std():.3f}")
 print(f"invalid cells still NaN: {bool(torch.isnan(normalised[~mask]).all())}")
 """),
-    md("""### Reproducing this sample later
+        md("""### Reproducing this sample later
 
 Everything above is recoverable from six things, and none of them is the data
 itself:
@@ -626,84 +736,111 @@ itself:
 Store those alongside model weights. Rendered tensors take more space and fix
 the choices made in §2, so re-rendering at a different resolution or support
 threshold requires the six values above rather than the stored arrays."""),
+    ],
+)
 
-])
-
-write("spatio_temporal_query_generation.ipynb", [
-    md("""# ML use cases and the training loader
+write(
+    "spatio_temporal_query_generation.ipynb",
+    [
+        md("""# ML use cases and the training loader
 
 A machine learning setup on ocean data is mostly a statement about time and
-resolution. A forecasting model requires its target strictly after its
-context, a data assimilation model requires the target at the middle of the
-window, and a super-resolution model requires the same patch twice at two
-resolutions. Each of those is a different query, and this notebook builds four of them against the
-published QuerySet, then feeds the result into a `DataLoader` that runs.
+resolution. A forecasting model needs its target strictly after its context, an
+assimilation model needs the target in the middle of the window, and a
+super-resolution model needs the same patch from instruments of different
+resolution. Each is a different query, and this notebook builds four of them
+against the published QuerySet, then feeds each into a `DataLoader` that runs.
 
 The four query shapes are:
 
 1. **Forecasting**, where a context window is followed by a target at a lead
    time, with a check that the two windows do not overlap.
 2. **Midpoint retrieval**, where the target sits at the centre of a symmetric
-   window, which is the shape data assimilation and interpolation setups need.
-3. **Super-resolution**, where one patch is returned at two resolutions.
-4. **Multi-source sparse and dense**, where every drawn row is required to
-   carry a sparse source alongside the dense fields.
+   window, which is the shape assimilation and interpolation setups need.
+3. **Super-resolution**, where a coarse observation and two dense analyses
+   supply the inputs and a finer instrument over the same patch supplies the
+   target.
+4. **Multi-source**, where every drawn row is required to carry a sparse
+   observation alongside the dense analyses.
 
-The last sections then build the training pipeline: a `DataLoader` with worker
-processes, batching under both fixed and native shapes, normalisation
-statistics computed once, and a training step whose loss is masked.
+The last two sections build the training pipeline: batching under fixed and
+native shapes, normalisation statistics computed once, and a training step
+whose loss is masked.
 
-**Coverage filters appear here but are not explained here.** The
-[QuerySet and filter deep-dive](data_retrieval_workflows.ipynb) covers
-`CoverageRequirement` and the null-versus-zero distinction it rests on. This
-notebook uses coverage to condition a draw and links there for the reasoning.
-For the concepts behind QuerySets, draws, and renderers, start with
+**Every section draws rows that actually carry the data it renders.** Coverage
+requirements do that work at selection time, so no figure below has a hole in
+it. The [QuerySet and filter deep-dive](data_retrieval_workflows.ipynb) covers
+`CoverageRequirement` and the null-versus-zero distinction it rests on. For the
+concepts behind QuerySets, draws, and renderers, start with
 [From a published QuerySet to a rendered sample](ml_dataset.ipynb)."""),
-    code(SETUP), code(PLOTTING), code(LOAD),
-    md("""## 1. Forecasting: context now, target later
+        code(SETUP),
+        code(PLOTTING),
+        code(LOAD),
+        md("""## Why this notebook works at 512 km
+
+Patch size decides how much ocean a sample contains, and it interacts with the
+render shape. A 256 km patch at 31°N spans about 2.7° of longitude, which is
+roughly 27 cells of an 0.1° L4 analysis. Asking `Resample` for a 32x32 output
+from that grid is asking for more cells than the instrument measured, and
+`Resample` switches to bilinear interpolation when a target side exceeds
+native. The result looks smooth because it *is* smooth: the extra detail is
+interpolation, not ocean.
+
+A 512 km patch spans about 5.4°, and the same sources arrive at 45x51 or larger.
+That is enough to render at or below native everywhere, so every panel in this
+notebook shows measured cells rather than interpolated ones. It is also enough
+area to show a front or an eddy rather than a single gradient.
+
+The published sizes are 128, 256 and 512 km, so 512 is the largest patch
+available and the one used throughout below."""),
+        code("""
+SUPER_PATCH_KM = 512
+queryset = QuerySet.from_hub(SUPER_PATCH_KM, "eval")
+print(f"queryset_id={queryset.queryset_id[:16]}...; kind={queryset.header['kind']}; "
+      f"positions={len(queryset.positions)}; dates={len(queryset.dates)}")
+"""),
+        md("""## 1. Forecasting: context now, target later
 
 A forecasting setup needs the context window and the target to be separate
 objects, so that a model consuming context cannot reach the target by accident.
 `QueryFilter` states the relation and the lead time, and the two datasets then
 differ only in their context offsets.
 
-The mechanism is worth stating plainly, because the same one drives every
-construction in this notebook. `draw_queryset` builds every row from a single
-`QueryFilter`, so all rows in a draw share its offsets. To get a second set of
-rows anchored identically but pointing at a different time, copy the drawn rows
-and override `context_start_offset_days` and `context_end_offset_days` on the
-copies. `OceanTACODataset` accepts a plain sequence of row mappings, so those
-copies are a valid dataset input.
+`draw_queryset` builds every row from a single `QueryFilter`, so all rows in a
+draw share its offsets. To get the target rows, copy the drawn rows and point
+them at the target day. `OceanTACODataset` accepts a plain sequence of row
+mappings, so those copies are a valid dataset input.
+
+Two details make the copies honest. The lead comes from the filter rather than
+being retyped at the call site, so the two cannot drift apart. And the copies
+clear `relation` and `target_lead_days`, because a target row is not itself a
+forecast anchor — it is the day being predicted. The library renders the
+context window of whatever row it is given; constructing the target is the
+caller's job.
 
 Draw once and derive both datasets from that single draw. Drawing twice would
-change which rows are eligible and silently compare different anchors.
-
-**What round-trips and what does not.** The draw record describes the draw, so
-the context rows replay exactly. The target rows are rebuilt in notebook code
-from that draw, because the experiment record stores only the filter-level
-offsets and therefore does not describe the overridden copies. Persist the draw
-record and the override rule together, rather than assuming the whole pipeline
-round-trips from the record alone.
-
-The printed check is the one that matters: the two windows must be disjoint, or
-the model can see its own target."""),
-    code("""
-from ocean_taco import GeoBox, QueryFilter, draw_queryset, replay_experiment, select_queryset
+change which rows are eligible and silently compare different anchors."""),
+        code("""
+from ocean_taco import (CoverageRequirement, GeoBox, QueryFilter, draw_queryset,
+                        replay_experiment, select_queryset)
 from ocean_taco.render import Native, Resample
 from ocean_taco.torch import OceanTACODataset
 
 BOX = GeoBox(-80, -30, 10, 45)
-SOURCE = {"l4_sst": Resample((32, 32), support_threshold=0.5)}
+BATCH_SIZE = 4
 
-# Every section below draws this many rows and pulls exactly one batch of them,
-# so each use case is judged across eight positions and dates rather than on
-# whichever single row happened to come back first.
-BATCH_SIZE = 8
+# At 512 km the L4 analyses arrive at 45x51 or larger, so a 40x40 output stays
+# at or below native for every drawn row and no cell is interpolated.
+SST = {"l4_sst": Resample((40, 40), support_threshold=0.5)}
 
-def offset_rows(rows, start, end):
-    # Copy drawn rows and point them at a different span around the same
-    # anchor. OceanTACODataset accepts a plain sequence of row mappings.
-    return [{**row, "context_start_offset_days": start, "context_end_offset_days": end} for row in rows]
+def target_rows(draw, query_filter):
+    # The target day, derived from the filter's own lead so the two cannot
+    # disagree. The copies are plain same-time rows: a target is the day being
+    # predicted, not another forecast anchor.
+    lead = query_filter.target_lead_days
+    return [{**row, "context_start_offset_days": lead, "context_end_offset_days": lead,
+             "relation": "same_time", "target_lead_days": 0}
+            for row in draw.rows]
 
 def window_of(dataset):
     context = dataset[0]["query"].context
@@ -715,68 +852,115 @@ forecast_draw = draw_queryset(queryset, requested_row_count=BATCH_SIZE, seed=29,
                               record_path=DRAW_DIR / "forecast-draw.json",
                               query_filter=forecast_filter)
 lead = forecast_filter.target_lead_days
-context_set = OceanTACODataset(queries=forecast_draw, sources=SOURCE, catalog_config=config)
-target_set = OceanTACODataset(queries=offset_rows(forecast_draw.rows, lead, lead), sources=SOURCE, catalog_config=config)
-context_window = context_set[0]["query"].context
-target_window = target_set[0]["query"].context
+context_set = OceanTACODataset(queries=forecast_draw, sources=SST, catalog_config=config)
+target_set = OceanTACODataset(queries=target_rows(forecast_draw, forecast_filter),
+                              sources=SST, catalog_config=config)
 print(f"anchor:  {forecast_draw.rows[0]['anchor_time'][:10]}")
 print(f"context: {window_of(context_set)}")
 print(f"target:  {window_of(target_set)}  (lead {lead} day)")
-print(f"windows disjoint: {target_window.start > context_window.end}")
+print(f"windows disjoint: {target_set[0]['query'].context.start > context_set[0]['query'].context.end}")
 print(f"draw record replays: {replay_experiment(queryset, DRAW_DIR / 'forecast-draw.json').rows == forecast_draw.rows}")
 """),
-    md("""### The batch this query shape produces
+        md("""### The batch this query shape produces
 
-Printed offsets say what was asked for. A batch says what came back, so from
-here on every section ends by building a `DataLoader` over its dataset and
-pulling one batch of eight.
+Printed offsets say what was asked for. A batch says what came back, so every
+section from here ends by building a `DataLoader` and pulling one batch.
 
 Two loader settings matter and both appear in every call below.
 `collate_ocean_samples` is passed as `collate_fn` because the default PyTorch
 collation cannot stack these samples, and `seed_ocean_taco_worker` is passed as
-`worker_init_fn` because worker processes otherwise inherit one seed. §7
+`worker_init_fn` because worker processes otherwise inherit one seed. §5
 returns to both, along with the third case, batching sources whose shape varies
 between rows.
 
-The context and target batches are drawn side by side. They hold the same
-eight positions one day apart, which is the prediction a forecasting model is
-asked to make."""),
-    code("""
+The figure below is the one a forecasting setup should be judged on. The first
+two columns are the context day and the target day; the third is the
+**difference between them**, which is what the model actually has to predict.
+
+Each row scales to its own patch. The box reaches 45°N, so a December row in
+the north and a September row in the tropics are more than 20 °C apart, and one
+range wide enough for both renders either as a single flat shade. Scaling per
+row keeps every patch legible, at the cost that colour no longer means the same
+temperature between rows -- which is why the two columns that do compare
+directly, context and target, share one scale within each row. The difference
+column has its own symmetric range around zero, and that one is comparable
+across rows."""),
+        code("""
+import torch
 from torch.utils.data import DataLoader
 from ocean_taco.torch import (ShapeBucketSampler, collate_ocean_samples,
                               native_pad_collate, seed_ocean_taco_worker)
 
 def one_batch(dataset, batch_size=BATCH_SIZE, collate=collate_ocean_samples):
-    # One batch, built the same way in every section. num_workers stays at 2
-    # because these draws are small and the fetch, not the collation, is what
-    # takes the time.
     loader = DataLoader(dataset, batch_size=batch_size, num_workers=2,
                         collate_fn=collate, worker_init_fn=seed_ocean_taco_worker)
     return next(iter(loader))
 
+def require_complete(batch, tokens, label):
+    # A hole in a use-case figure means the draw was wrong, not that the figure
+    # should apologise for it. Fail here rather than publish an empty panel.
+    for token in tokens:
+        available = batch["availability"][token]
+        if not all(available):
+            raise AssertionError(f"{label}: {token} missing in {available.count(False)} rows")
+    print(f"{label}: all {len(batch['availability'][tokens[0]])} rows carry {', '.join(tokens)}")
+
 context_batch = one_batch(context_set)
 target_batch = one_batch(target_set)
+require_complete(context_batch, ["l4_sst"], "context")
+require_complete(target_batch, ["l4_sst"], "target")
 print(f"context batch: {tuple(context_batch['l4_sst']['data'].shape)}  (batch, days, height, width)")
 print(f"target batch:  {tuple(target_batch['l4_sst']['data'].shape)}")
-print(f"targets available: {target_batch['availability']['l4_sst']}")
-
-def dated(prefix):
-    return lambda batch, index: f"{prefix} {batch_dates(batch)[index]}"
-
-display_figure(batch_panel_grid(context_batch, "l4_sst", panel_title=dated("context"),
-                                title=f"Context: one batch of {BATCH_SIZE} drawn rows, last context day"))
-display_figure(batch_panel_grid(target_batch, "l4_sst", panel_title=dated("target"),
-                                title=f"Target: the same {BATCH_SIZE} positions, {lead} day later"))
-print("Each column pair is one training example. The eight rows span different positions and seasons,")
-print("which is what a draw is for: one batch already covers most of the box and most of the year.")
 """),
-    md("""## 2. Midpoint retrieval for assimilation and interpolation
+        code("""
+count = context_batch["l4_sst"]["data"].shape[0]
+fig, axes = plt.subplots(count, 3, figsize=(11.5, 3.1 * count), constrained_layout=True)
+DIFF_LIMIT = 1.5
+for row in range(count):
+    context_record = batch_member(context_batch, "l4_sst", row)
+    target_record = batch_member(target_batch, "l4_sst", row)
+    extent = geographic_extent(context_record)
+    context_field = np.where(np.asarray(context_record["valid_mask"])[-1],
+                             np.asarray(context_record["data"])[-1], np.nan)
+    target_field = np.where(np.asarray(target_record["valid_mask"])[0],
+                            np.asarray(target_record["data"])[0], np.nan)
+    # Each row scales to its own patch. These panels compare two days of one
+    # position, and a range wide enough for the whole box -- 45N in winter to
+    # the tropics in summer -- renders any single patch as one flat shade.
+    pair = np.concatenate([context_field[np.isfinite(context_field)].ravel(),
+                           target_field[np.isfinite(target_field)].ravel()])
+    row_limits = {"vmin": float(pair.min()), "vmax": float(pair.max())}
+    for column, (field, limits, cmap) in enumerate((
+            (context_field, row_limits, CMAP),
+            (target_field, row_limits, CMAP),
+            (target_field - context_field, {"vmin": -DIFF_LIMIT, "vmax": DIFF_LIMIT}, "PuOr_r"))):
+        axis = axes[row, column]
+        drawn = axis.imshow(field, origin="lower", cmap=cmap, interpolation="nearest",
+                            aspect=map_aspect(extent), extent=extent, **limits)
+        add_coastlines(axis)
+        axis.set(xticks=[], yticks=[])
+        if row == 0:
+            axis.set_title(("context (last day)", f"target (+{lead} day)",
+                            "target - context")[column], fontsize=10)
+        if column == 1:
+            fig.colorbar(drawn, ax=axis, shrink=.85, label=colorbar_label("l4_sst"))
+        elif column == 2:
+            fig.colorbar(drawn, ax=axis, shrink=.85, label=f"change [{UNITS['l4_sst']}]")
+        else:
+            axis.set_ylabel(f"{batch_dates(context_batch)[row]}", fontsize=9)
+fig.suptitle(f"Forecasting at {SUPER_PATCH_KM} km: {source_label('l4_sst', (40, 40))}, "
+             f"{lead} day lead", fontsize=12)
+display_figure(fig)
+print("Each row carries its own scale, so a 27 degC tropical patch and a 3-19 degC winter front")
+print("are both legible. The third column is the change a forecast model has to predict.")
+"""),
+        md("""## 2. Midpoint retrieval for assimilation and interpolation
 
 Forecasting places the target after the context. Assimilation and
 interpolation setups place it inside: the model sees a span of days on both
 sides and predicts the state in the middle. That reordering is expressed
-entirely through the target offsets passed to the same filter, so it needs no
-library change.
+entirely through the offsets passed to the same filter, so it needs no library
+change.
 
 `QueryFilter.relation` takes `"same_time"` or `"forecast"`, where `"forecast"`
 requires a positive `target_lead_days` and `"same_time"` requires zero. The
@@ -785,36 +969,34 @@ or "target strictly in the future". The context offsets carry the rest: they
 are signed integers with only `context_end_offset_days >= context_start_offset_days`
 enforced, so a symmetric window like `(-2, +2)` is legal.
 
-That gives the construction. Use `relation="same_time"` with a symmetric
-window, then override the target rows to `(0, 0)`, which is the anchor and
-therefore the midpoint of the context span. The difference between this section
-and the previous one is exactly which offsets the target rows carry.
+Use `relation="same_time"` with a symmetric window, then point the target rows
+at `(0, 0)`, the anchor and therefore the midpoint of the span. The difference
+between this section and the previous one is exactly which offsets the target
+rows carry.
 
 Anchors near the ends of the record are rejected rather than silently
 truncated, because the filter requires every date across the window to exist in
-the QuerySet. A wider window therefore leaves fewer eligible rows, which the
-printed counts show."""),
-    code("""
+the QuerySet. A wider window therefore leaves fewer eligible rows."""),
+        code("""
 HALF_WINDOW = 2
 midpoint_filter = QueryFilter(box=BOX, relation="same_time",
                               context_start_offset_days=-HALF_WINDOW,
                               context_end_offset_days=HALF_WINDOW)
-print(f"eligible pairs with a +/-{HALF_WINDOW} day window: {select_queryset(queryset, midpoint_filter).count}")
-print(f"eligible pairs with no window at all:      {select_queryset(queryset, QueryFilter(box=BOX)).count}")
+print(f"eligible pairs with a +/-{HALF_WINDOW} day window: {select_queryset(queryset, midpoint_filter).count:,d}")
+print(f"eligible pairs with no window at all:      {select_queryset(queryset, QueryFilter(box=BOX)).count:,d}")
 
 midpoint_draw = draw_queryset(queryset, requested_row_count=BATCH_SIZE, seed=11,
                               record_path=DRAW_DIR / "midpoint-draw.json",
                               query_filter=midpoint_filter)
-window_set = OceanTACODataset(queries=midpoint_draw, sources=SOURCE, catalog_config=config)
-centre_set = OceanTACODataset(queries=offset_rows(midpoint_draw.rows, 0, 0), sources=SOURCE, catalog_config=config)
+window_set = OceanTACODataset(queries=midpoint_draw, sources=SST, catalog_config=config)
+centre_set = OceanTACODataset(queries=target_rows(midpoint_draw, midpoint_filter),
+                              sources=SST, catalog_config=config)
 print(f"anchor:  {midpoint_draw.rows[0]['anchor_time'][:10]}")
 print(f"context: {window_of(window_set)}  -> data {tuple(window_set[0]['l4_sst']['data'].shape)}")
 print(f"target:  {window_of(centre_set)}  -> data {tuple(centre_set[0]['l4_sst']['data'].shape)}")
-print("The target date sits at the centre of the context span, with equal numbers of days on each side.")
+print("The target sits at the centre of the context span, with equal numbers of days on each side.")
 """),
-    code("""
-# The two query shapes drawn on a day axis, so the difference between them is
-# visible as geometry rather than only as printed dates.
+        code("""
 fig, axes = plt.subplots(2, 1, figsize=(9, 3.6), sharex=True)
 layouts = (("forecast: target after the context", (-1, 0), (lead, lead)),
            (f"midpoint: target inside a +/-{HALF_WINDOW} day context", (-HALF_WINDOW, HALF_WINDOW), (0, 0)))
@@ -832,499 +1014,443 @@ fig.tight_layout()
 display_figure(fig)
 print("Both shapes come from one draw each. Only the offsets on the target rows differ.")
 """),
-    md("""### The batch this query shape produces
+        md("""### The batch this query shape produces
 
-The schematic above is the intent. The batch is the result, and it differs from
-§1's in one visible way: the context tensor now carries five days per row
-instead of two, because the window spans two days either side of the anchor.
+The schematic above is the intent; the batch is the result. It differs from
+§1's in one visible way: the context tensor carries five days per row instead
+of two, because the window spans two days either side of the anchor.
 
-The first figure holds the batch position fixed and steps across the five
-context days, which is the axis this query shape adds. It scales to the chosen
-patch's own range rather than the shared one used elsewhere, because it
-compares days within one patch and the shared range would render five identical
-blocks. The second figure is the target batch, one day per row, each one the
-centre of the window above it, and that one keeps the shared range because it
-does compare patches.
-
-A day inside the window can still arrive empty, and one does below. The window
-reserves a slot for every day it asked for, so the tensor keeps its full time
-axis and the missing day shows up as a labelled panel rather than a shorter
-row. A model consuming this window reads `valid_mask` to tell the two
-apart."""),
-    code("""
+The figure holds one batch member fixed and steps across its five context days,
+which is the axis this query shape adds. It scales to that patch's own range
+rather than the shared one, because it compares days within a single patch and
+the shared range would render five near-identical blocks. The member shown is
+the one with the most spatial structure, since a patch of uniform open ocean
+would show five identical panels whatever happened between them."""),
+        code("""
 window_batch = one_batch(window_set)
 centre_batch = one_batch(centre_set)
+require_complete(window_batch, ["l4_sst"], "context window")
+require_complete(centre_batch, ["l4_sst"], "midpoint target")
 days = window_batch["l4_sst"]["data"].shape[1]
 print(f"context batch: {tuple(window_batch['l4_sst']['data'].shape)}  ({days} days per row)")
 print(f"target batch:  {tuple(centre_batch['l4_sst']['data'].shape)}  (the middle day alone)")
 
-# One batch member across the whole window, so the axis this section adds is
-# the one the figure varies. The member is the one with the most spatial
-# structure rather than row 0, since a patch of uniform open ocean would show
-# five identical panels whatever happened between them.
 spread = [float(np.nanstd(np.asarray(window_batch["l4_sst"]["data"])[index]))
           for index in range(window_batch["l4_sst"]["data"].shape[0])]
 member = int(np.nanargmax(spread))
 record = batch_member(window_batch, "l4_sst", member)
 values = np.asarray(record["data"])
 extent = geographic_extent(record)
-
-# This figure compares days within one patch rather than patches against each
-# other, so it scales to that patch's own range. The shared COLOR_RANGE spans
-# every North Atlantic row and would flatten a single patch to one shade.
 low, high = float(np.nanmin(values)), float(np.nanmax(values))
-fig, axes = plt.subplots(1, days, figsize=(3.3 * days, 3.2), constrained_layout=True)
-offsets = range(-HALF_WINDOW, HALF_WINDOW + 1)
-for axis, day, offset in zip(axes, range(days), offsets):
+
+fig, axes = plt.subplots(1, days, figsize=(3.3 * days, 3.4), constrained_layout=True)
+for axis, day, offset in zip(axes, range(days), range(-HALF_WINDOW, HALF_WINDOW + 1)):
     axis.set(title=f"anchor {offset:+d} d" if offset else "anchor (target day)", xticks=[], yticks=[])
     valid = np.asarray(record["valid_mask"])[day]
-    if not valid.any():
-        # A day inside the window with no valid cell at all. The window asked
-        # for it and the tensor reserves its slot, so the row still has five
-        # days and one of them carries nothing.
-        axis.text(.5, .5, "no valid cells\\non this day", ha="center", va="center",
-                  fontsize=9, color="#777777", transform=axis.transAxes)
-        continue
     drawn = axis.imshow(np.where(valid, values[day], np.nan), origin="lower", cmap=CMAP,
-                        interpolation="nearest", aspect="auto", extent=extent, vmin=low, vmax=high)
+                        interpolation="nearest", aspect=map_aspect(extent), extent=extent,
+                        vmin=low, vmax=high)
     add_coastlines(axis)
-fig.colorbar(drawn, ax=axes.tolist(), shrink=.7, label="degrees celsius")
-fig.suptitle(f"Row {member} of the batch across its +/-{HALF_WINDOW} day context window, "
-             f"scaled to this patch ({low:.1f} to {high:.1f} degC)")
+fig.colorbar(drawn, ax=axes.tolist(), shrink=.7, label=colorbar_label("l4_sst"))
+fig.suptitle(f"Row {member} across its +/-{HALF_WINDOW} day context window: "
+             f"{source_label('l4_sst', (40, 40))}, scaled to this patch ({low:.1f} to {high:.1f})")
 display_figure(fig)
-
-display_figure(batch_panel_grid(centre_batch, "l4_sst", panel_title=dated("target"),
-                                title=f"The target day for all {BATCH_SIZE} rows, each at the centre of its own window"))
 print("The window supplies days on both sides of the target, so a model here interpolates in time")
 print("rather than extrapolating forward as it does in section 1.")
 """),
-    md("""## 3. Super-resolution: native grids, and a power-of-two rescaling
+        md("""## 3. Super-resolution: coarse inputs and a finer target
 
-The sources in this catalog do not share a resolution. Over one patch, an L4
-analysis arrives on a grid of a few tens of cells per side, nadir altimetry
-arrives as a narrow track sampled densely along it, and the SWOT swath arrives
-at a few hundred cells per side. A super-resolution setup exists because of
-that spread, so the first thing to look at is the spread itself.
+Super-resolution needs two views of the same patch at two resolutions. The
+useful pair is not one array resampled twice — that manufactures the coarse
+version by throwing away detail, and a model trained on it learns to undo a
+known downsampling rather than to recover real structure.
 
-This section uses the 512 km QuerySet rather than the 256 km one used
-elsewhere. A larger patch carries more spatial context, which super-resolution
-architectures require, and it also makes the resolution differences between
-products easier to see in one figure.
+This catalog carries a genuine pair. `l3_ssh` is nadir altimetry, a narrow
+track sampled densely along its length, arriving at roughly 73x60 over a 512 km
+box. `l3_swot` is the SWOT swath, arriving at roughly 256x210 over the same
+box. That is a real difference in instrument resolution, and it is the one a
+super-resolution model exists to bridge.
 
-`Native()` renders each source on its own grid without resampling, so the shape
-that comes back is the shape the product actually has over this box. The four
-sources are rendered together below and their shapes printed alongside the
-panels."""),
-    code("""
-from ocean_taco import CoverageRequirement
+The nadir track alone is a thin input. Operational super-resolution for sea
+surface height conditions on more: `l4_sst` and `l4_ssh` are gridded analyses
+that cover the whole patch every day, and both carry information about the
+structure the swath resolves. Sea surface temperature fronts sit where dynamic
+height gradients sit, and the L4 height analysis is the coarse field the swath
+refines. So the input side of this section is three sources — one sparse
+observation and two dense analyses — and the target is the single fine swath.
 
-SUPER_PATCH_KM = 512
-super_queryset = QuerySet.from_hub(SUPER_PATCH_KM, "eval")
-SUPER_SOURCES = ("l4_sst", "l4_ssh", "l3_ssh", "l3_swot")
+Each input keeps its own grid rather than sharing one. Forcing them onto a
+common shape would mean resampling every input down to the coarsest of them,
+discarding nadir resolution to match the L4 height grid. Encoders that take
+several inputs at several scales are the normal architecture here, so the
+query shape should preserve what each instrument actually resolved."""),
+        code("""
+# Both instruments present on every drawn row. aggregate="min" applies the
+# requirement to each context day rather than to their sum, so a row cannot
+# qualify on one good day. The nadir threshold is low because a track covers a
+# line: requiring 0.1 of the box from it selects nothing at all.
+sr_filter = QueryFilter(box=BOX, coverage=(
+    CoverageRequirement("swot", "valid_fraction_ocean", 0.2, aggregate="min"),
+    CoverageRequirement("ssh", "valid_fraction_ocean", 0.02, aggregate="min")))
+print(f"rows carrying both instruments every day: {select_queryset(queryset, sr_filter).count:,d}")
 
-# Condition the draw so every row carries SWOT. The deep-dive notebook explains
-# what this requirement reads and why null coverage is not zero coverage.
-swot_present = QueryFilter(box=BOX, coverage=(CoverageRequirement("swot", "valid_fraction_ocean", 0.2),))
-super_draw = draw_queryset(super_queryset, requested_row_count=8, seed=5,
-                           record_path=DRAW_DIR / "superres-draw.json",
-                           query_filter=swot_present)
-native_set = OceanTACODataset(queries=super_draw,
-                              sources={token: Native() for token in SUPER_SOURCES},
+sr_draw = draw_queryset(queryset, requested_row_count=BATCH_SIZE, seed=5,
+                        record_path=DRAW_DIR / "superres-draw.json", query_filter=sr_filter)
+SR_INPUTS = ("l3_ssh", "l4_sst", "l4_ssh")
+SR_TARGET = "l3_swot"
+SR_TOKENS = SR_INPUTS + (SR_TARGET,)
+native_set = OceanTACODataset(queries=sr_draw, sources={token: Native() for token in SR_TOKENS},
                               catalog_config=config)
 native_rows = [native_set[index] for index in range(len(native_set))]
-print(f"{len(native_rows)} rows drawn from the {SUPER_PATCH_KM} km QuerySet, each carrying all four sources.")
 print()
-print(f"{'source':10s} {'native shape':>16s}   {'cells':>8s}   degrees per cell")
-for token in SUPER_SOURCES:
+print(f"{'source':10s} {'role':8s} {'native shape':>16s}   {'cells':>8s}   degrees per cell")
+for token in SR_TOKENS:
     record = native_rows[0][token]
     height, width = np.asarray(record["data"]).shape[-2:]
     lon, lat = np.asarray(record["lon"]).ravel(), np.asarray(record["lat"]).ravel()
     step_lon = abs(float(lon[-1] - lon[0])) / max(width - 1, 1)
     step_lat = abs(float(lat[-1] - lat[0])) / max(height - 1, 1)
-    print(f"{token:10s} {f'{height} x {width}':>16s}   {height * width:>8,d}   {step_lat:.3f} lat, {step_lon:.3f} lon")
+    role = "target" if token == SR_TARGET else "input"
+    print(f"{token:10s} {role:8s} {f'{height} x {width}':>16s}   {height * width:>8,d}   "
+          f"{step_lat:.3f} lat, {step_lon:.3f} lon")
+"""),
+        md("""### Choosing the shapes
+
+Super-resolution architectures built on pixel shuffle or stacked strided
+convolutions need the input and target shapes in an integer ratio, usually a
+power of two, because each stage doubles one axis. `Resample` takes the output
+shape directly, so the factor is whatever the caller makes it, and the
+calculation worth writing down satisfies two requirements at once.
+
+The first is the power of two, taken here against the nadir input, which is the
+observation the target refines. The second is that **every** shape stays at or
+below its own source's native grid, since resampling above native invents
+detail the instrument never resolved. That is why each shape binds against its
+own source rather than all of them against the smallest: binding everything
+against the coarsest input would discard exactly the resolution advantage the
+nadir track and the swath have.
+
+Support thresholds differ per source because the sampling geometry does. A
+threshold of 0.5 asks that half an output cell be covered before it is filled,
+which suits a wide swath and the gridded analyses. A nadir track covers a line
+rather than an area, so no cell of any useful size reaches half, and the same
+threshold would empty the source entirely."""),
+        code("""
+FACTOR = 4
+
+def largest_multiple_at_or_below(rows, token, factor):
+    smallest = min(min(np.asarray(row[token]["data"]).shape[-2:]) for row in rows)
+    return (smallest // factor) * factor, smallest
+
+coarse_shapes, coarse_side = {}, None
+for token in SR_INPUTS:
+    side, native = largest_multiple_at_or_below(native_rows, token, FACTOR)
+    coarse_shapes[token] = (side, side)
+    if token == "l3_ssh":
+        coarse_side = side
+    print(f"{token:9s} smallest native side {native:>3d}  -> input {side} x {side}")
+
+fine_side = coarse_side * FACTOR
+swath_native = min(min(np.asarray(row[SR_TARGET]["data"]).shape[-2:]) for row in native_rows)
+print(f"{SR_TARGET:9s} smallest native side {swath_native:>3d}  -> target {fine_side} x {fine_side}")
+print(f"factor against the nadir input: {fine_side // coarse_side}x")
+print(f"every shape at or below its own native grid: "
+      f"{all(side <= min(min(np.asarray(row[token]['data']).shape[-2:]) for row in native_rows) for token, (side, _) in coarse_shapes.items()) and fine_side <= swath_native}")
+
+SR_SUPPORT = {"l3_ssh": 0.0, "l4_sst": 0.5, "l4_ssh": 0.5, "l3_swot": 0.5}
+sr_sources = {token: Resample(shape, support_threshold=SR_SUPPORT[token])
+              for token, shape in coarse_shapes.items()}
+sr_sources[SR_TARGET] = Resample((fine_side, fine_side), support_threshold=SR_SUPPORT[SR_TARGET])
+sr_set = OceanTACODataset(queries=sr_draw, sources=sr_sources, catalog_config=config)
+sr_batch = one_batch(sr_set)
+require_complete(sr_batch, list(SR_TOKENS), "super-resolution")
 print()
-print("One box, one date, four different grids. That mismatch is what a super-resolution setup addresses.")
-"""),
-    code("""
-# The same box in all four panels, each on its own native grid. Panels share a
-# colour range per quantity so the difference between them is resolution and
-# coverage rather than colour scaling.
-row = native_rows[0]
-fig, axes = plt.subplots(1, 4, figsize=(17, 4.2), constrained_layout=True)
-for axis, token in zip(axes, SUPER_SOURCES):
-    record = row[token]
-    values = np.asarray(record["data"])[0]
-    shown = np.where(np.asarray(record["valid_mask"])[0], values, np.nan)
-    drawn = axis.imshow(shown, origin="lower", cmap=CMAP, interpolation="nearest",
-                        aspect="auto", extent=geographic_extent(record), **color_limits(token))
-    axis.set(title=f"{token}: {values.shape[0]} x {values.shape[1]} native",
-             xlabel="longitude [°]", ylabel="latitude [°]")
-    add_coastlines(axis)
-    fig.colorbar(drawn, ax=axis, shrink=.85)
-fig.suptitle(f"One {SUPER_PATCH_KM} km box on four native grids, at {row['query'].context.start:%Y-%m-%d}")
-display_figure(fig)
-print("l4_sst and l4_ssh are dense and smooth. l3_ssh is a narrow nadir track and l3_swot a wide swath,")
-print("both leaving most of the box unmeasured, which is why the white areas differ between panels.")
-"""),
-    md("""### Configuring `Resample` for a power-of-two factor
-
-Super-resolution architectures built on pixel shuffle or on stacked strided
-convolutions need the two shapes to stand in an integer ratio, usually a power
-of two, because each stage doubles one axis. `Resample` takes the output shape
-directly, so the factor is whatever the caller makes it, and the calculation
-worth writing down is the one that satisfies two requirements at once.
-
-The first requirement is the power of two. The second is that neither shape
-exceeds the native grid, since resampling above native invents detail the
-instrument never resolved, and `Resample` warns when a target exceeds native by
-more than 2x. These two are compatible, and the way to satisfy both is to take
-the smallest native side across the rows being drawn, then pick the largest
-power-of-two-divisible shape at or below it.
-
-The cell below performs that calculation from the measured native shapes rather
-than asserting the numbers, so the same code selects valid shapes for a
-different box, patch size or source pair.
-
-It also sets `support_threshold` per source instead of once for both, which
-matters more than it looks. The threshold is the fraction of an output cell
-that must be covered before the renderer fills it, and a nadir track covers a
-line rather than an area. Ask a track for half-covered cells and every cell
-fails, so the source comes back structurally absent and the pair has nothing to
-super-resolve from. The swath keeps the stricter threshold, because for a wide
-swath the question of how much of a cell was measured is a real one."""),
-    code("""
-FACTOR = 4          # the super-resolution factor the architecture expects
-SR_PAIR = ("l3_ssh", "l3_swot")
-
-# The fine shape must fit inside the native grid of every drawn row, so the
-# binding number is the smallest side seen across all of them.
-smallest_side = min(min(np.asarray(sample[token]["data"]).shape[-2:])
-                    for sample in native_rows for token in SR_PAIR)
-# Round down to a multiple of the factor, so dividing by it stays an integer.
-fine_side = (smallest_side // FACTOR) * FACTOR
-coarse_side = fine_side // FACTOR
-print(f"smallest native side over {len(native_rows)} rows and {len(SR_PAIR)} sources: {smallest_side}")
-print(f"fine target: {fine_side} x {fine_side}, coarse input: {coarse_side} x {coarse_side}, factor {FACTOR}x")
-print(f"fine shape stays at or below native: {fine_side <= smallest_side}")
-print(f"the ratio is an exact power of two: {fine_side // coarse_side == FACTOR}")
-
-# Support thresholds are per source, because what counts as enough support
-# depends on the sampling geometry. A threshold of 0.5 asks that half of an
-# output cell be covered before it is filled, which suits a wide swath. A nadir
-# track covers a line rather than an area, so no cell of any useful size ever
-# reaches half, and the same threshold would empty the source entirely.
-SR_SUPPORT = {"l3_ssh": 0.0, "l3_swot": 0.5}
-
-def sr_sources(side):
-    return {token: Resample((side, side), support_threshold=SR_SUPPORT[token]) for token in SR_PAIR}
-
-coarse_set = OceanTACODataset(queries=super_draw, sources=sr_sources(coarse_side), catalog_config=config)
-fine_set = OceanTACODataset(queries=super_draw, sources=sr_sources(fine_side), catalog_config=config)
-coarse_batch = one_batch(coarse_set)
-fine_batch = one_batch(fine_set)
-print()
-print(f"coarse batch shape: {tuple(coarse_batch[SR_PAIR[0]]['data'].shape)}")
-print(f"fine batch shape:   {tuple(fine_batch[SR_PAIR[0]]['data'].shape)}")
-print("No upsampling warning is raised, because both shapes stay at or below native for every row.")
-"""),
-    code("""
-# The whole batch rather than a chosen few rows, so the pair is judged across
-# the full spread of swath coverage instead of on favourable samples.
-count = coarse_batch[SR_PAIR[0]]["data"].shape[0]
-stages = [(token, label, side, batch)
-          for token in SR_PAIR
-          for label, side, batch in (("input", coarse_side, coarse_batch), ("target", fine_side, fine_batch))]
-fig, axes = plt.subplots(len(stages), count, squeeze=False,
-                         figsize=(2.5 * count, 2.7 * len(stages)), constrained_layout=True)
-for row, (token, label, side, batch) in enumerate(stages):
-    available = batch["availability"][token]
-    for column in range(count):
-        axis = axes[row, column]
-        axis.set(xticks=[], yticks=[])
-        record = batch_member(batch, token, column)
-        extent = geographic_extent(record)
-        if not available[column] or not np.isfinite(extent).all():
-            axis.text(.5, .5, "no data", ha="center", va="center", fontsize=8,
-                      color="#777777", transform=axis.transAxes)
-            continue
-        shown = np.where(np.asarray(record["valid_mask"])[0], np.asarray(record["data"])[0], np.nan)
-        axis.imshow(shown, origin="lower", cmap=CMAP, interpolation="nearest",
-                    aspect="auto", extent=extent, **color_limits(token))
-    axes[row, 0].set_ylabel(f"{token}\\n{label} {side}x{side}", fontsize=8)
-for column in range(count):
-    axes[0, column].set_title(batch_dates(coarse_batch)[column], fontsize=8)
-fig.suptitle(f"{FACTOR}x super-resolution pairs across one batch of {count} rows")
-display_figure(fig)
-print(f"Each column is a different position and date. The {FACTOR}x factor holds for every one of them,")
-print("while how much of the box each instrument measured changes from column to column.")
-"""),
-    md("""## 4. Multi-source: requiring a sparse source alongside dense fields
-
-A model that fuses a sparse observation with dense analyses needs rows where
-the sparse source is actually present. Drawing rows at random and discarding
-the ones that miss would work, but it wastes fetches and makes the row count
-depend on luck. Conditioning the draw on recorded coverage instead states the
-requirement up front and lets the filter find rows that satisfy it, at no
-download cost, because coverage reads the published fact table.
-
-The draw in §3 already carries that requirement, so this section reuses it and
-adds the dense fields. Every row carries SWOT by construction, which the
-availability count confirms.
-
-Metrics are validated per token and form a closed set. `swot` accepts
-`valid_cells`, `valid_ocean_cells`, `n_obs_sum`, `valid_fraction_footprint`,
-and `valid_fraction_ocean`. `ssh` accepts the same set without `n_obs_sum`, and
-`argo` accepts `profile_count`. The
-[deep-dive](data_retrieval_workflows.ipynb) covers what those values mean."""),
-    code("""
-multi_sources = {
-    "l4_sst": Resample((32, 32), support_threshold=0.5),
-    "l4_ssh": Resample((32, 32), support_threshold=0.5),
-    "l3_swot": Resample((32, 32), support_threshold=0.5),
-}
-multi_set = OceanTACODataset(queries=super_draw, sources=multi_sources, catalog_config=config)
-multi_batch = one_batch(multi_set)
-rows = multi_batch["l4_sst"]["data"].shape[0]
-for token in multi_sources:
-    available = multi_batch["availability"][token]
-    fractions = multi_batch[token]["valid_mask"].flatten(1).float().mean(dim=1)
-    print(f"  {token:9s} available in {sum(available)}/{rows} rows, "
+for token in SR_TOKENS:
+    fractions = sr_batch[token]["valid_mask"].flatten(1).float().mean(dim=1)
+    print(f"  {token:9s} {tuple(sr_batch[token]['data'].shape)!s:20s} "
           f"valid fraction per row {[round(float(value), 2) for value in fractions]}")
 print()
-print("A low valid fraction on a sparse source is evidence about sampling, not about the ocean.")
+print("No upsampling warning is raised, because each shape stays at or below its own native grid.")
 """),
-    md("""### The batch this query shape produces
+        md("""### The batch this query shape produces
 
-The counts above say every row carries SWOT. The figure says what carrying it
-actually looks like, and the contrast with the two dense rows is the point of
-the section: the analyses fill their patch, and the swath crosses it at a
-different angle and a different width in every column.
+The first three rows are the inputs and the bottom row is the target, one
+column per batch member. Two things are visible at once.
+
+The resolution gap is the first: the nadir panels step in visible blocks and
+the swath panels resolve structure inside a track of the same width. That
+contrast is the section's subject, and it is what forcing every source onto one
+output grid would erase.
+
+The second is what the dense inputs add. The two L4 analyses fill their patch
+where both observations leave most of it empty, and the temperature field
+carries fronts in the same places the swath shows height structure. A model
+given only the nadir track would have to invent the rest of the patch; given
+the analyses as well, it has a coarse field everywhere and a sharp observation
+along one track.
+
+The white areas on the observation rows are honest. Neither instrument covers a
+whole patch on a given day, and where the two tracks do not coincide the
+observation input and the target describe different parts of the box. A model
+on this pair has to handle that, which is why the geometry is worth looking at
+before choosing a loss."""),
+        code("""
+count = sr_batch[SR_TARGET]["data"].shape[0]
+fig, axes = plt.subplots(len(SR_TOKENS), count, squeeze=False,
+                         figsize=(3.4 * count, 3.3 * len(SR_TOKENS)), constrained_layout=True)
+for row, token in enumerate(SR_TOKENS):
+    for column in range(count):
+        axis = axes[row, column]
+        record = batch_member(sr_batch, token, column)
+        extent = geographic_extent(record)
+        field = np.where(np.asarray(record["valid_mask"])[0], np.asarray(record["data"])[0], np.nan)
+        drawn = axis.imshow(field, origin="lower", cmap=CMAP, interpolation="nearest",
+                            aspect=map_aspect(extent), extent=extent, **color_limits(token))
+        add_coastlines(axis)
+        axis.set(xticks=[], yticks=[])
+        if row == 0:
+            axis.set_title(batch_dates(sr_batch)[column], fontsize=9)
+    shape = (fine_side, fine_side) if token == SR_TARGET else coarse_shapes[token]
+    role = "target: " if token == SR_TARGET else "input: "
+    axes[row, 0].set_ylabel(role + source_label(token, shape), fontsize=9)
+    fig.colorbar(drawn, ax=axes[row, :].tolist(), shrink=.85, label=colorbar_label(token))
+fig.suptitle(f"Super-resolution at {SUPER_PATCH_KM} km: nadir track and two L4 analyses "
+             f"-> SWOT swath, {fine_side // coarse_side}x on the nadir grid", fontsize=12)
+display_figure(fig)
+print("The nadir input steps in visible blocks; the target resolves structure inside the same track.")
+print("The two L4 rows are the dense context that makes the rest of the patch predictable.")
+"""),
+        md("""## 4. Multi-source: a sparse observation beside dense analyses
+
+A model that fuses a sparse observation with dense analyses needs rows where
+the sparse source is actually present. Drawing at random and discarding the
+misses would work, but it wastes fetches and makes the row count depend on
+luck. Conditioning the draw on recorded coverage states the requirement up
+front and costs no downloads, because coverage reads the published fact table
+rather than the granules.
+
+Section 3 rendered the same three tokens, but its subject was resolution: what
+each instrument resolves, and how the shapes are chosen. The subject here is
+**selection** — how a draw is conditioned so that every row carries the sparse
+source at all, and what the resulting geometry costs a fusion model. So this
+section draws its own rows against a stricter swath requirement rather than
+reusing §3's, and renders every source on one shared grid, because a fusion
+model that concatenates its inputs channel-wise needs them aligned.
+
+The dense sources carry no coverage evidence of their own — the fact table
+records `swot`, `ssh` and `argo` only — so their completeness is checked after
+the draw rather than required before it."""),
+        code("""
+multi_filter = QueryFilter(box=BOX, coverage=(
+    CoverageRequirement("swot", "valid_fraction_ocean", 0.25, aggregate="min"),))
+multi_draw = draw_queryset(queryset, requested_row_count=BATCH_SIZE, seed=17,
+                           record_path=DRAW_DIR / "multisource-draw.json",
+                           query_filter=multi_filter)
+DENSE_SHAPE = (40, 40)
+multi_sources = {
+    "l4_sst": Resample(DENSE_SHAPE, support_threshold=0.5),
+    "l4_ssh": Resample(DENSE_SHAPE, support_threshold=0.5),
+    "l3_swot": Resample((128, 128), support_threshold=0.5),
+}
+multi_set = OceanTACODataset(queries=multi_draw, sources=multi_sources, catalog_config=config)
+multi_batch = one_batch(multi_set)
+require_complete(multi_batch, list(multi_sources), "multi-source")
+rows = multi_batch["l4_sst"]["data"].shape[0]
+for token in multi_sources:
+    fractions = multi_batch[token]["valid_mask"].flatten(1).float().mean(dim=1)
+    print(f"  {token:9s} valid fraction per row {[round(float(value), 2) for value in fractions]}")
+print()
+print("A low valid fraction on the swath is evidence about sampling, not about the ocean.")
+"""),
+        md("""### The batch this query shape produces
+
+Every row carries all three sources by construction. The figure shows what
+carrying them looks like, and the contrast between the rows is the point: the
+analyses fill their patch, and the swath crosses it at a different angle and a
+different width in every column.
 
 A model fusing these three has to handle that variation per sample rather than
 assume a fixed observation geometry."""),
-    code("""
-# One column per batch member, one row per source, so the sparse source is read
-# against the dense ones it is being fused with.
+        code("""
 tokens = list(multi_sources)
 fig, axes = plt.subplots(len(tokens), rows, squeeze=False,
-                         figsize=(2.5 * rows, 2.8 * len(tokens)), constrained_layout=True)
+                         figsize=(3.2 * rows, 3.3 * len(tokens)), constrained_layout=True)
 for row, token in enumerate(tokens):
-    available = multi_batch["availability"][token]
     for column in range(rows):
         axis = axes[row, column]
-        axis.set(xticks=[], yticks=[])
         record = batch_member(multi_batch, token, column)
         extent = geographic_extent(record)
-        if not available[column] or not np.isfinite(extent).all():
-            axis.text(.5, .5, "no data", ha="center", va="center", fontsize=8,
-                      color="#777777", transform=axis.transAxes)
-            continue
-        shown = np.where(np.asarray(record["valid_mask"])[0], np.asarray(record["data"])[0], np.nan)
-        axis.imshow(shown, origin="lower", cmap=CMAP, interpolation="nearest",
-                    aspect="auto", extent=extent, **color_limits(token))
+        field = np.where(np.asarray(record["valid_mask"])[0], np.asarray(record["data"])[0], np.nan)
+        drawn = axis.imshow(field, origin="lower", cmap=CMAP, interpolation="nearest",
+                            aspect=map_aspect(extent), extent=extent, **color_limits(token))
         add_coastlines(axis)
-    axes[row, 0].set_ylabel(token, fontsize=9)
-for column in range(rows):
-    axes[0, column].set_title(batch_dates(multi_batch)[column], fontsize=8)
-fig.suptitle(f"One batch of {rows} rows, each carrying two dense analyses and the SWOT swath")
+        axis.set(xticks=[], yticks=[])
+        if row == 0:
+            axis.set_title(batch_dates(multi_batch)[column], fontsize=9)
+    shape = DENSE_SHAPE if token.startswith("l4_") else (128, 128)
+    axes[row, 0].set_ylabel(source_label(token, shape), fontsize=9)
+    fig.colorbar(drawn, ax=axes[row, :].tolist(), shrink=.85, label=colorbar_label(token))
+fig.suptitle(f"One batch of {rows} rows: two dense analyses and the SWOT swath", fontsize=12)
 display_figure(fig)
-print("The white area in the l3_swot row is the part of the patch the satellite did not overfly")
-print("on that date, which is why conditioning the draw on coverage is what makes these rows usable.")
+print("The white area in the l3_swot row is the part of the patch the satellite did not overfly.")
+print("Conditioning the draw on coverage is what makes every one of these rows usable.")
 """),
-    md("""## 5. Mixed output shapes in one sample
+        md("""## 5. Batching native shapes: padding against bucketing
 
-The sources in a single sample do not have to share a shape. Collation runs per
-token, so a `Resample` token and a `Native()` token in the same configuration
-collate into two differently-shaped stacks without interfering.
+The sources in one sample need not share a shape. Collation runs per token, so
+a `Resample` token and a `Native()` token collate into two differently-shaped
+stacks without interfering.
 
 `Native()` is where shapes genuinely vary between rows, because the swath
 crosses each patch differently. Stacking then needs either padding, which
-invents cells, or grouping rows that already agree. `ShapeBucketSampler` does
-the grouping, and §7 uses it in a loader.
+invents cells, or grouping rows that already agree. Both appear below, on the
+same draw, so the trade-off is visible as numbers rather than asserted.
 
-Building the sampler calls `native_shapes`, which is a deliberate O(N)
-rendering pass in the parent process. It is not free on a large draw, so treat
-it as setup cost rather than something to call per epoch."""),
-    code("""
+Building the sampler calls `native_shapes`, a deliberate O(N) rendering pass in
+the parent process. It is not free on a large draw, so treat it as setup cost
+rather than something to call per epoch."""),
+        code("""
 from ocean_taco.torch import native_shapes
-mixed = OceanTACODataset(queries=super_draw, sources={
-    "l4_sst": Resample((32, 32), support_threshold=0.5),
+
+# A larger draw than the sections above, because bucketing only has something
+# to show when several rows share a shape. Eight rows with eight distinct
+# shapes would make every bucket a singleton and every comparison trivial.
+bucket_draw = draw_queryset(queryset, requested_row_count=16, seed=23,
+                            record_path=DRAW_DIR / "bucket-draw.json",
+                            query_filter=multi_filter)
+mixed = OceanTACODataset(queries=bucket_draw, catalog_config=config, sources={
+    "l4_sst": Resample(DENSE_SHAPE, support_threshold=0.5),
     "l3_swot": Native(),
-}, catalog_config=config)
-for index in range(3):
-    record = mixed[index]
-    print(f"row {index}: l4_sst={tuple(np.asarray(record['l4_sst']['data']).shape)} "
-          f"l3_swot={tuple(np.asarray(record['l3_swot']['data']).shape)}")
-swot_shapes = native_shapes(mixed, "l3_swot")
-print(f"native l3_swot shapes across the draw: {swot_shapes}")
-print(f"distinct shapes: {len(set(swot_shapes))} of {len(swot_shapes)} rows")
+})
+shapes = native_shapes(mixed, "l3_swot")
+distinct = {}
+for shape in shapes:
+    distinct[tuple(shape)] = distinct.get(tuple(shape), 0) + 1
+print(f"native l3_swot shapes across {len(shapes)} rows: {len(distinct)} distinct")
+for shape, occurrences in sorted(distinct.items(), key=lambda item: -item[1])[:5]:
+    print(f"  {shape[0]:>3d} x {shape[1]:<4d} in {occurrences} row(s)")
 """),
-    md("""### The batch this query shape produces
+        code("""
+BUCKET_BATCH = 4
+padded_batch = one_batch(mixed, batch_size=BUCKET_BATCH, collate=native_pad_collate)
+fixed, native = padded_batch["l4_sst"], padded_batch["l3_swot"]
+print(f"l4_sst  stacks directly: {tuple(fixed['data'].shape)}")
+print(f"l3_swot padded up to:    {tuple(native['data'].shape)}")
+draw_order_padding = int(native["spatial_padding_mask"].sum())
 
-A batch of eight rows whose shapes disagree cannot be stacked as they are, so
-`native_pad_collate` pads each row up to the largest in the batch and records
-where it did so in `spatial_padding_mask`. The figure below draws that mask,
-alongside the fixed-shape token that needed no padding at all.
+sampler = ShapeBucketSampler(shapes, batch_size=BUCKET_BATCH, seed=19, shuffle=False)
+bucket_loader = DataLoader(mixed, batch_sampler=sampler, collate_fn=native_pad_collate,
+                           num_workers=2, worker_init_fn=seed_ocean_taco_worker)
+bucketed_padding, sizes = 0, []
+for bucketed in bucket_loader:
+    bucketed_padding += int(bucketed["l3_swot"]["spatial_padding_mask"].sum())
+    sizes.append(bucketed["l3_swot"]["data"].shape[0])
+print()
+print(f"batches of {BUCKET_BATCH} in draw order: 1 shown, {draw_order_padding:,d} padded cells")
+print(f"bucketed into {len(sizes)} batches of sizes {sizes}: {bucketed_padding:,d} padded cells")
+print("Grouping by shape removes the padding. The cost is that a batch no longer holds")
+print("an independent sample of the draw, which matters if batch composition reaches the loss.")
+"""),
+        md("""### What padding looks like
 
-Padded cells are not measurements and not missing measurements either. They are
-an artifact of putting rows of different sizes in one tensor, which is why they
-get their own mask rather than being folded into `valid_mask`."""),
-    code("""
-mixed_batch = one_batch(mixed, collate=native_pad_collate)
-fixed, native = mixed_batch["l4_sst"], mixed_batch["l3_swot"]
-print(f"l4_sst  stacks directly:  {tuple(fixed['data'].shape)}")
-print(f"l3_swot padded up to:     {tuple(native['data'].shape)}  from {native['true_shapes']}")
-padded_fraction = native["spatial_padding_mask"].flatten(1).float().mean(dim=1)
-print(f"padded cell fraction per row: {[round(float(value), 2) for value in padded_fraction]}")
-
+`native_pad_collate` pads each row up to the largest in its batch and records
+where it did so in `spatial_padding_mask`. Padded cells are not measurements,
+and not missing measurements either: they are an artifact of putting rows of
+different sizes in one tensor, which is why they get their own mask rather than
+being folded into `valid_mask`."""),
+        code("""
 count = native["data"].shape[0]
-fig, axes = plt.subplots(3, count, squeeze=False, figsize=(2.4 * count, 7.4), constrained_layout=True)
+fig, axes = plt.subplots(2, count, squeeze=False, figsize=(3.0 * count, 6.4),
+                         constrained_layout=True)
 for column in range(count):
     swot = np.where(np.asarray(native["valid_mask"])[column][0],
                     np.asarray(native["data"])[column][0], np.nan)
-    axes[0, column].imshow(swot, origin="lower", cmap=CMAP, interpolation="nearest",
-                           aspect="auto", **color_limits("l3_swot"))
+    drawn = axes[0, column].imshow(swot, origin="lower", cmap=CMAP, interpolation="nearest",
+                                   aspect="auto", **color_limits("l3_swot"))
     axes[1, column].imshow(np.asarray(native["spatial_padding_mask"])[column], origin="lower",
                            cmap="Greys", interpolation="nearest", aspect="auto", vmin=0, vmax=1)
-    sst = np.where(np.asarray(fixed["valid_mask"])[column][0],
-                   np.asarray(fixed["data"])[column][0], np.nan)
-    axes[2, column].imshow(sst, origin="lower", cmap=CMAP, interpolation="nearest",
-                           aspect="auto", **color_limits("l4_sst"))
-    axes[0, column].set_title(f"{native['true_shapes'][column][1]}x{native['true_shapes'][column][2]}", fontsize=8)
-    for row in range(3):
+    true_shape = native["true_shapes"][column]
+    axes[0, column].set_title(f"{true_shape[1]}x{true_shape[2]} native", fontsize=9)
+    for row in range(2):
         axes[row, column].set(xticks=[], yticks=[])
-for row, label in enumerate(("l3_swot, padded", "spatial_padding_mask", "l4_sst, fixed 32x32")):
-    axes[row, 0].set_ylabel(label, fontsize=8)
-fig.suptitle(f"One padded batch of {count} native rows, with the padding it required")
+axes[0, 0].set_ylabel(source_label("l3_swot") + ", padded", fontsize=9)
+axes[1, 0].set_ylabel("spatial_padding_mask", fontsize=9)
+add_colorbar(fig, drawn, axes[0, :].tolist(), "l3_swot", shrink=.85)
+fig.suptitle(f"One padded batch of {count} native rows, with the padding it required", fontsize=12)
 display_figure(fig)
-print("The dark region in the middle row is padding, and it differs per row because the native")
-print("shapes do. The bottom row needed none, which is what a fixed Resample shape buys.")
+print("The dark region in the lower row is padding, and it differs per row because the native")
+print("shapes do. These panels are drawn in array space, not on a map, so they are not to scale.")
 """),
-    md("""## 6. Normalisation statistics, computed once
+        md("""## 6. Normalisation statistics, then a training step
 
 Statistics belong to the experiment rather than to the batch. Computing them
 per batch would let batch composition reach the inputs, so this section
 computes one mean and standard deviation over the training rows and holds them
 fixed for everything downstream.
 
+They are accumulated by **streaming the whole training draw** rather than
+reading one batch. A mean over a single batch of four patches is not a
+statistic; it is a sample of whatever four positions the draw happened to
+return. Summing values, squares and counts across the loader gives the same
+answer a full pass would, at one batch of memory.
+
 The average runs through `valid_mask`. Averaging the raw array instead would
-fold in cells the instrument never measured, and since those cells are NaN the
-result would be NaN. The printed comparison against a zero-filled average shows
-what the mask excludes: zero-filling treats every unobserved cell as a
-measured zero, so the mean moves towards zero in proportion to how much of the
-patch went unobserved."""),
-    code("""
-import torch
-training_set = QuerySet.from_hub(PATCH_SIZE_KM, "training")
-stats_draw = draw_queryset(training_set, requested_row_count=BATCH_SIZE, seed=3,
+fold in cells the instrument never measured, and since those are NaN the result
+would be NaN. The comparison against a zero-filled average shows what the mask
+excludes: zero-filling treats every unobserved cell as a measured zero, so the
+mean moves towards zero in proportion to how much of the patch went
+unobserved."""),
+        code("""
+training_set = QuerySet.from_hub(SUPER_PATCH_KM, "training")
+stats_draw = draw_queryset(training_set, requested_row_count=32, seed=3,
                            record_path=DRAW_DIR / "stats-draw.json",
                            query_filter=QueryFilter(box=BOX))
-stats_data = OceanTACODataset(queries=stats_draw, sources=SOURCE, catalog_config=config)
-stats_batch = one_batch(stats_data)
-stats_values, stats_mask = stats_batch["l4_sst"]["data"], stats_batch["l4_sst"]["valid_mask"]
-selected = stats_values[stats_mask]
-SST_MEAN = float(selected.mean())
-SST_STD = max(float(selected.std()), 1e-6)
-print(f"training rows used: {stats_values.shape[0]}; valid cells: {int(stats_mask.sum())}")
-print(f"fixed statistics: mean={SST_MEAN:.3f} degC, std={SST_STD:.3f} degC")
-# The same average taken two ways on a sparse source, where the mask actually
-# excludes cells. l4_sst is dense and complete here, so it would show no
-# difference at all.
-sparse_data = OceanTACODataset(queries=super_draw, sources={"l3_swot": Resample((32, 32), support_threshold=0.5)},
-                               catalog_config=config)
-sparse_batch = one_batch(sparse_data)
+stats_loader = DataLoader(OceanTACODataset(queries=stats_draw, sources=SST, catalog_config=config),
+                          batch_size=8, num_workers=2, collate_fn=collate_ocean_samples,
+                          worker_init_fn=seed_ocean_taco_worker)
+
+total, total_square, cells, rows_seen = 0.0, 0.0, 0, 0
+for batch in stats_loader:
+    values, mask = batch["l4_sst"]["data"], batch["l4_sst"]["valid_mask"]
+    selected = values[mask]
+    total += float(selected.sum())
+    total_square += float((selected ** 2).sum())
+    cells += int(mask.sum())
+    rows_seen += values.shape[0]
+SST_MEAN = total / cells
+SST_STD = (total_square / cells - SST_MEAN ** 2) ** 0.5
+print(f"streamed {rows_seen} training rows in batches of 8; {cells:,d} valid cells")
+print(f"fixed statistics: mean={SST_MEAN:.3f} {UNITS['l4_sst']}, std={SST_STD:.3f} {UNITS['l4_sst']}")
+"""),
+        code("""
+sparse_batch = one_batch(OceanTACODataset(
+    queries=multi_draw, sources={"l3_swot": Resample((128, 128), support_threshold=0.5)},
+    catalog_config=config))
 sparse_values, sparse_mask = sparse_batch["l3_swot"]["data"], sparse_batch["l3_swot"]["valid_mask"]
 filled = torch.nan_to_num(sparse_values, nan=0.0)
-print(f"l3_swot valid cells: {int(sparse_mask.sum())} of {sparse_mask.numel()}")
-print(f"  masked mean      = {float(sparse_values[sparse_mask].mean()):.4f} m")
-print(f"  zero-filled mean = {float(filled.mean()):.4f} m")
+masked_mean = float(sparse_values[sparse_mask].mean())
+print(f"l3_swot valid cells: {int(sparse_mask.sum()):,d} of {sparse_mask.numel():,d}")
+print(f"  masked mean      = {masked_mean:.4f} {UNITS['l3_swot']}")
+print(f"  zero-filled mean = {float(filled.mean()):.4f} {UNITS['l3_swot']}")
 print("Zero-filling counts every unsampled cell as a measured zero and pulls the average towards it.")
-"""),
-    md("""### What the statistics do to the batch
 
-Four histograms over the batch above. The left column is the training source
-before and after normalisation, the transform every input downstream goes
-through. Normalising only shifts and rescales the axis, so the two shapes are
-the same and the axis labels carry the difference.
-
-The right column is the one to read carefully. It counts the sparse source two
-ways, and the grey spike in the upper panel is thousands of cells the swath
-never visited, entered as measured zeros. The dotted line marks where the
-honest average sits, so the distance to each panel's own dashed mean is the
-error that zero-filling introduces."""),
-    code("""
-fig, axes = plt.subplots(2, 2, figsize=(12, 6.4), constrained_layout=True,
-                         height_ratios=(1, 1))
-
-# Raw and normalised go in separate panels rather than on shared axes. The
-# transform only shifts and rescales the horizontal axis, so overlaying the two
-# would put identical shapes on top of each other and show nothing.
-raw = stats_values[stats_mask].flatten().numpy()
-normalised = (raw - SST_MEAN) / SST_STD
-axes[0, 0].hist(raw, bins=60, color="#2474a6")
-axes[0, 0].axvline(SST_MEAN, color="#333333", linestyle="--", linewidth=1)
-axes[0, 0].set(title=f"l4_sst raw, {stats_values.shape[0]} training rows through the mask",
-               xlabel="degrees celsius", ylabel="valid cells")
-axes[1, 0].hist(normalised, bins=60, color="#d95f02")
-axes[1, 0].axvline(0, color="#333333", linestyle="--", linewidth=1)
-axes[1, 0].set(title="the same cells after normalisation",
-               xlabel="standard deviations from the mean", ylabel="valid cells")
-
-masked_only = sparse_values[sparse_mask].flatten().numpy()
-zero_filled = filled.flatten().numpy()
-bins = np.linspace(-.6, .6, 61)
-for axis, (values, color, label) in zip(axes[:, 1], (
-        (zero_filled, "#999999", "zero-filled, every cell counted"),
-        (masked_only, "#d95f02", "through the mask, measured cells only"))):
-    axis.hist(values, bins=bins, color=color)
-    axis.axvline(float(values.mean()), color="#333333", linestyle="--", linewidth=1)
-    axis.set(title=f"l3_swot {label}", xlabel="sea level anomaly [m]",
-             ylabel="cells", yscale="log", ylim=(.7, 1e4))
-    axis.axvline(float(masked_only.mean()), color="#d95f02", linestyle=":", linewidth=1)
+fig, axes = plt.subplots(1, 2, figsize=(12, 4.0), constrained_layout=True)
+raw = sparse_values[sparse_mask].flatten().numpy()
+axes[0].hist(raw, bins=60, color="#2474a6")
+axes[0].axvline(masked_mean, color="#333333", linestyle="--", linewidth=1)
+axes[0].set(title=f"{source_label('l3_swot')}, measured cells only",
+            xlabel=colorbar_label("l3_swot"), ylabel="cells")
+axes[1].hist(filled.flatten().numpy(), bins=60, color="#d95f02")
+axes[1].axvline(float(filled.mean()), color="#333333", linestyle="--", linewidth=1)
+axes[1].axvline(masked_mean, color="#2474a6", linestyle=":", linewidth=1.4)
+axes[1].set(title="the same source zero-filled, every unsampled cell counted",
+            xlabel=colorbar_label("l3_swot"), ylabel="cells")
+fig.suptitle("What the mask excludes: the spike at zero is cells the swath never visited", fontsize=12)
 display_figure(fig)
-print("The grey spike at zero is every cell the swath never covered, counted as a measurement.")
-print("The dashed lines are the two means, and the gap between them is the error that spike causes.")
+print("The dotted line marks the honest average; the gap to the dashed one is the error")
+print("that zero-filling introduces.")
 """),
-    md("""## 7. Batching without padding, through the bucket sampler
-
-Every section above pulled its batch through `one_batch`, so the loader
-settings are already in hand: `collate_ocean_samples` for fixed shapes,
-`native_pad_collate` when a `Native()` token has to become a tensor, and
-`seed_ocean_taco_worker` so worker processes do not share one seed. Worker
-safety needs nothing further, because the dataset nulls its backends when
-pickled and a fork guard drops parent catalog state, so no file handles cross
-the fork.
-
-The case those settings do not cover is the one §5 left open. Padding made the
-native rows stackable, at the cost of a tensor that was mostly padding on some
-rows. `ShapeBucketSampler` avoids paying that cost by choosing which rows share
-a batch: it groups rows whose native shapes already agree, so each batch stacks
-with little or no padding.
-
-The tradeoff is that batch composition is no longer free. Rows are grouped by
-shape rather than drawn independently, and the sampler shuffles within and
-across buckets unless a seed and `shuffle=False` say otherwise. Compare the
-padded cell counts below against §5's, which batched the same rows in draw
-order."""),
-    code("""
-native_only = OceanTACODataset(queries=super_draw, sources={"l3_swot": Native()}, catalog_config=config)
-shapes = native_shapes(native_only, "l3_swot")
-sampler = ShapeBucketSampler(shapes, batch_size=2, seed=19, shuffle=False)
-bucket_loader = DataLoader(native_only, batch_sampler=sampler, collate_fn=native_pad_collate,
-                           num_workers=2, worker_init_fn=seed_ocean_taco_worker)
-print(f"{len(set(shapes))} distinct shapes across {len(shapes)} rows -> {len(sampler)} bucketed batches")
-bucketed_padding = []
-for index, bucketed in enumerate(bucket_loader):
-    padded = int(bucketed["l3_swot"]["spatial_padding_mask"].sum())
-    bucketed_padding.append(padded)
-    print(f"  batch {index}: {tuple(bucketed['l3_swot']['data'].shape)} padded cells={padded}")
-print()
-print(f"padded cells, bucketed into {len(sampler)} batches: {sum(bucketed_padding):,d}")
-print(f"padded cells, one batch in draw order (section 5): {int(native['spatial_padding_mask'].sum()):,d}")
-print("Grouping by shape is what removes that padding, and the cost is that a batch no longer holds")
-print("an independent sample of the draw.")
-"""),
-    md("""## 8. A training step with a masked loss
+        md("""### A training step with a masked loss
 
 There is no single mask. A collated batch carries `valid_mask`, `source_valid`,
 `support_mask`, `time_mask`, and `ocean_mask`, plus a top-level `availability`
@@ -1333,28 +1459,15 @@ dict. The relation between the first three is:
 > `valid_mask = source_valid & support_mask`, further ANDed with the ocean mask
 > when one is supplied.
 
-The split exists so that a reader can tell why a cell is invalid: the source
+The split exists so a reader can tell *why* a cell is invalid: the source
 reported nothing (`source_valid`), the renderer had too little support to build
 a value (`support_mask`), or the cell is land (`ocean_mask`). Drive the loss
-from `valid_mask` and use the others to explain it. For `VectorPair`,
-`pair_available` is the sample-level Boolean and `valid_mask` covers cells where
-both components have support.
+from `valid_mask` and read the others when a row looks wrong.
 
-The step below trains one small convolution to predict the midpoint field from
-its context. The loss is computed only on cells valid in both the input and the
-target, so unobserved cells contribute no gradient.
-
-Three of the four batches below carry a member whose target is structurally
-absent, because L4 SST has no asset for that anchor date. Those members
-contribute no valid cells, which the printed counts show as half a batch rather
-than a whole one. The loop still reads `availability` and skips a batch where
-every target is absent, which is the case a heavily masked batch would
-otherwise be confused with. At this draw size it does not arise, and the guard
-is there for the draws where it does."""),
-    code("""
+The step below uses the midpoint draw from §2: context on both sides,
+target in the middle, loss over cells valid in both."""),
+        code("""
 def masked_mse(prediction, target, mask):
-    # Cells outside the mask contribute no gradient at all, rather than
-    # contributing a difference against a filled-in value.
     if not bool(mask.any()):
         return torch.zeros((), requires_grad=True)
     return ((prediction - target)[mask] ** 2).mean()
@@ -1367,71 +1480,65 @@ def normalise(values, mask):
 torch.manual_seed(0)
 model = torch.nn.Conv2d(1, 1, kernel_size=3, padding=1)
 optimiser = torch.optim.SGD(model.parameters(), lr=0.05)
+loader_args = dict(batch_size=2, num_workers=2, collate_fn=collate_ocean_samples,
+                   worker_init_fn=seed_ocean_taco_worker)
+context_loader = DataLoader(OceanTACODataset(queries=midpoint_draw, sources=SST,
+                                             catalog_config=config), **loader_args)
+target_loader = DataLoader(OceanTACODataset(queries=target_rows(midpoint_draw, midpoint_filter),
+                                            sources=SST, catalog_config=config), **loader_args)
 
-context_loader = DataLoader(
-    OceanTACODataset(queries=midpoint_draw, sources=SOURCE, catalog_config=config),
-    batch_size=2, num_workers=2, collate_fn=collate_ocean_samples, worker_init_fn=seed_ocean_taco_worker)
-target_loader = DataLoader(
-    OceanTACODataset(queries=offset_rows(midpoint_draw.rows, 0, 0), sources=SOURCE, catalog_config=config),
-    batch_size=2, num_workers=2, collate_fn=collate_ocean_samples, worker_init_fn=seed_ocean_taco_worker)
-
-for step, (context_batch, target_batch) in enumerate(zip(context_loader, target_loader)):
-    context, target = context_batch["l4_sst"], target_batch["l4_sst"]
-    present = target_batch["availability"]["l4_sst"]
-    if not any(present):
-        # Every target in this batch is structurally absent, so there is
-        # nothing to compare a prediction against. Skipping is the honest
-        # response, and availability is what says so.
-        print(f"step {step}: no target available for any batch member ({present}), skipped")
-        continue
-    # Average the context days down to one channel, keeping only valid days.
+for step, (context_batch_step, target_batch_step) in enumerate(zip(context_loader, target_loader)):
+    context, target = context_batch_step["l4_sst"], target_batch_step["l4_sst"]
     context_valid = context["valid_mask"]
     inputs = normalise(context["data"], context_valid).mean(dim=1, keepdim=True)
     targets = normalise(target["data"], target["valid_mask"])
     mask = context_valid.any(dim=1, keepdim=True) & target["valid_mask"]
     loss = masked_mse(model(inputs), targets, mask)
     optimiser.zero_grad(); loss.backward(); optimiser.step()
-    print(f"step {step}: batch={tuple(inputs.shape)} targets available={present} "
-          f"valid cells={int(mask.sum())} of {mask.numel()} loss={float(loss.detach()):.4f}")
+    print(f"step {step}: batch={tuple(inputs.shape)} valid cells={int(mask.sum()):,d} "
+          f"of {mask.numel():,d} loss={float(loss.detach()):.4f}")
 print("The loss saw only cells valid in both the context and the target.")
 """),
-    code("""
-# Where a mask excludes cells, and why. The sparse source is the one that
-# shows this: a dense L4 analysis is valid nearly everywhere, so its three
-# panels would be indistinguishable.
-mask_record = sparse_data[0]["l3_swot"]
+        code("""
+mask_record = OceanTACODataset(queries=multi_draw, catalog_config=config,
+                               sources={"l3_swot": Resample((128, 128), support_threshold=0.5)})[0]["l3_swot"]
 data_panel = np.asarray(mask_record["data"])[0]
 source_panel = np.asarray(mask_record["source_valid"])[0]
 support_panel = np.asarray(mask_record["support_mask"])[0]
 valid_panel = np.asarray(mask_record["valid_mask"])[0]
-fig, axes = plt.subplots(1, 4, figsize=(16, 3.8), constrained_layout=True)
-panels = (("data [m]", data_panel, CMAP, color_limits("l3_swot")),
+extent = geographic_extent(mask_record)
+fig, axes = plt.subplots(1, 4, figsize=(16, 4.0), constrained_layout=True)
+panels = ((source_label("l3_swot"), np.where(valid_panel, data_panel, np.nan), CMAP, color_limits("l3_swot")),
           (f"source_valid ({source_panel.mean():.2f})", source_panel, "Greys_r", {"vmin": 0, "vmax": 1}),
           (f"support_mask ({support_panel.mean():.2f})", support_panel, "Greys_r", {"vmin": 0, "vmax": 1}),
-          (f"valid_mask ({valid_panel.mean():.2f}), drives the loss", valid_panel, "Greys_r", {"vmin": 0, "vmax": 1}))
-mask_extent = geographic_extent(mask_record)
-for axis, (title, values, colormap, limits) in zip(axes, panels):
-    drawn = axis.imshow(values, origin="lower", cmap=colormap, interpolation="nearest",
-                        aspect="auto", extent=mask_extent, **limits)
-    axis.set(title=title, xlabel="longitude [°]", ylabel="latitude [°]")
+          (f"valid_mask ({valid_panel.mean():.2f})", valid_panel, "Greys_r", {"vmin": 0, "vmax": 1}))
+for axis, (title, panel, cmap, limits) in zip(axes, panels):
+    drawn = axis.imshow(panel, origin="lower", cmap=cmap, interpolation="nearest",
+                        aspect=map_aspect(extent), extent=extent, **limits)
     add_coastlines(axis)
-    fig.colorbar(drawn, ax=axis, shrink=.85)
+    axis.set(title=title, xticks=[], yticks=[])
+    fig.colorbar(drawn, ax=axis, shrink=.8)
+fig.suptitle("Where a mask excludes cells, and why. The sparse source is the one that shows it.",
+             fontsize=12)
 display_figure(fig)
 print(f"valid_mask equals source_valid AND support_mask: "
       f"{bool((valid_panel == (source_panel & support_panel)).all())}")
 """),
-    md("""### What to carry forward
+        md("""### What to carry forward
 
 The pieces this notebook assembled are the ones an experiment has to persist:
-the draw record, the override rule that produced the target rows, the renderer
-shapes, and the normalisation statistics computed in §6. Those five items plus
-the QuerySet ID and the pinned catalog revision reproduce every tensor above,
-which the [overview notebook](ml_dataset.ipynb) lists in full."""),
+the draw record, the target-row rule that derives the target offsets from the
+filter, the renderer shapes and support thresholds, and the normalisation
+statistics from §6. Those plus the QuerySet ID and the pinned catalog revision
+reproduce every tensor above, which the [overview
+notebook](ml_dataset.ipynb) lists in full."""),
+    ],
+)
 
-])
-
-write("data_retrieval_workflows.ipynb", [
-    md("""# QuerySet selection and native-coordinate retrieval
+write(
+    "data_retrieval_workflows.ipynb",
+    [
+        md("""# QuerySet selection and native-coordinate retrieval
 
 Most of the work in building an ocean dataset happens before anything is
 downloaded. A published QuerySet carries a position table, a per-position and
@@ -1451,8 +1558,10 @@ This notebook is the reference for coverage filtering. The
 requirements to condition a draw and links here rather than re-explaining them.
 For the four-stage overview, see
 [From a published QuerySet to a rendered sample](ml_dataset.ipynb)."""),
-    code(SETUP), code(PLOTTING), code(LOAD),
-    md("""## 1. What a filter narrows
+        code(SETUP),
+        code(PLOTTING),
+        code(LOAD),
+        md("""## 1. What a filter narrows
 
 A `QueryFilter` restricts the published set along three independent axes:
 geography through `box`, time through `date_start` and `date_end`, and recorded
@@ -1464,7 +1573,7 @@ The counts below narrow in sequence. The starting number is every published
 position paired with every published date, which is a large number precisely
 because the QuerySet stores positions and dates as separate tables and takes
 their product."""),
-    code("""
+        code("""
 from ocean_taco import CoverageRequirement, GeoBox, QueryFilter, select_queryset
 box = GeoBox(-80, -30, 10, 45)
 all_pairs = len(queryset.positions) * len(queryset.dates)
@@ -1477,7 +1586,7 @@ print(f"box and first 90 dates:    {in_box_and_time.count:,}")
 print(f"box and observed SSH:      {observed.count:,}")
 print("None of these counts fetched a granule. They read the published tables.")
 """),
-    code("""
+        code("""
 labels = ["published", "in box", "box + 90 days", "box + SSH evidence"]
 counts = [all_pairs, in_box.count, in_box_and_time.count, observed.count]
 fig, axis = plt.subplots(figsize=(8, 3.6))
@@ -1491,7 +1600,7 @@ fig.tight_layout()
 display_figure(fig)
 print("The last bar counts only pairs whose recorded SSH coverage was measured and non-zero.")
 """),
-    md("""## 2. Null and zero mean different things
+        md("""## 2. Null and zero mean different things
 
 The coverage table records what was measured about each position and date, and
 it separates two states that are easy to conflate. A **null** means the
@@ -1506,7 +1615,7 @@ it as a zero that fails the threshold.
 
 The counts below come from the published table, so they describe the release
 rather than this notebook's selection."""),
-    code("""
+        code("""
 coverage = queryset.coverage
 nulls = sum(row["swot_valid_cells"] is None for row in coverage)
 zeros = sum(row["swot_valid_cells"] == 0 for row in coverage)
@@ -1517,7 +1626,7 @@ print(f"  zero (measured, none found):  {zeros:,}")
 print(f"  positive (measured, present): {measured:,}")
 print("A coverage filter rejects null evidence rather than reading it as a zero.")
 """),
-    md("""## 3. Coverage requirements
+        md("""## 3. Coverage requirements
 
 A `CoverageRequirement` names a token, a metric, and a minimum, and the filter
 keeps only pairs whose recorded value meets it. Because it reads the published
@@ -1536,7 +1645,7 @@ When a requirement spans a context window rather than a single date, the
 `aggregate` argument decides how the per-date values combine, taking `"sum"`,
 `"mean"`, or `"min"`. Use `"min"` to require the threshold on every day of the
 window rather than on the window as a whole."""),
-    code("""
+        code("""
 requirements = [
     ("swot", "valid_fraction_ocean", 0.2),
     ("swot", "valid_fraction_ocean", 0.5),
@@ -1550,7 +1659,7 @@ for token, metric, minimum in requirements:
     print(f"  {token:5s} {metric:22s} >= {minimum:<5} -> {selection.count:8,} pairs ({share:6.1%} of the box)")
 print("Argo is the sparse extreme: most patches on most days contain no float profile at all.")
 """),
-    md("""## 4. Where a selection sits
+        md("""## 4. Where a selection sits
 
 A count alone does not say whether a selection is concentrated in one corner of
 the box or spread across it, and neither does it say how it is distributed
@@ -1561,7 +1670,7 @@ above, which is the one the
 The left panel shows which positions survive the coverage requirement and how
 often each one does. The right panel counts surviving pairs per month, which is
 where a sampling artifact would show up as a gap or a spike."""),
-    code("""
+        code("""
 from collections import Counter
 selected = select_queryset(queryset, QueryFilter(box=box, coverage=(CoverageRequirement("swot", "valid_fraction_ocean", 0.2),)))
 position_hits, month_hits = Counter(), Counter()
@@ -1590,7 +1699,7 @@ fig.tight_layout()
 display_figure(fig)
 print("Coverage varies by position and by month, which is a property of the satellite orbit rather than of the filter.")
 """),
-    md("""## 5. The retrieval API: catalog rows and source tokens
+        md("""## 5. The retrieval API: catalog rows and source tokens
 
 The rest of this notebook works below the QuerySet layer, fetching named assets
 directly. Reach for this when you need a field outside the published patch
@@ -1605,7 +1714,7 @@ The registry also records the geometry, and that record governs the handling
 downstream. A `dense_grid` source is merged and cropped as a field, while a
 `ragged_points` source such as `argo` keeps individual float positions and is
 never rasterised on retrieval."""),
-    code("""
+        code("""
 from ocean_taco.registry import MODALITY_REGISTRY
 print(f"catalog URL={config.resolved_catalog_url}")
 print(f"{'token':10s} {'geometry':14s} {'filename':14s} {'unit':8s} primary variable")
@@ -1615,7 +1724,7 @@ for token in ("l4_sst", "l4_ssh", "l4_sss", "l3_ssh", "l3_swot", "argo"):
     print(f"{token:10s} {geometry:14s} {spec.filename:14s} {spec.canonical_unit:8s} {spec.primary_variable}")
 print("l4_sst and l4_ssh name different files, while the GLORYS tokens share one and differ only in variable.")
 """),
-    md("""## 6. One named tile
+        md("""## 6. One named tile
 
 The smallest retrieval unit is one asset for one date in one of the eight named
 Core regions. Regions are resolved by name rather than by bounding-box query,
@@ -1623,7 +1732,7 @@ because the region set is fixed and immutable while `tacoreader`'s bbox
 argument convention has changed across releases. Asking for a named tile is
 therefore the most direct call available, and it returns the file's own
 variables and dimensions with nothing merged or cropped."""),
-    code("""
+        code("""
 from ocean_taco.retrieve import load_tile_nc
 date = queryset.dates[0][:10]
 tile = load_tile_nc(catalog, date, "NORTH_ATLANTIC", "l4_sst", config=config)
@@ -1631,7 +1740,7 @@ print("date", date, "tile sizes", None if tile is None else dict(tile.sizes))
 if tile is not None:
     print("variables", list(tile.data_vars))
 """),
-    md("""## 7. Box retrieval and merge
+        md("""## 7. Box retrieval and merge
 
 A geographic box usually spans more than one region tile, so `load_bbox_nc`
 resolves every intersecting tile, fetches each once, merges them on their
@@ -1643,7 +1752,7 @@ Three return values mean three different things. `None` means no asset matched
 the request. An empty field means the asset existed and held nothing inside the
 box. Invalid coordinates or dates raise `ValueError` rather than returning
 something falsy."""),
-    code("""
+        code("""
 from ocean_taco import TimeRange
 from ocean_taco.retrieve import load_bbox_nc, load_multisource_time_series_nc
 sst = load_bbox_nc(catalog, date, box, "l4_sst", config=config)
@@ -1652,17 +1761,17 @@ print("sizes", None if sst is None else dict(sst.sizes))
 if sst is not None:
     print("coordinates", {key: (round(float(sst[key].min()), 2), round(float(sst[key].max()), 2)) for key in ("lat", "lon")})
 """),
-    code("""
+        code("""
 if sst is None:
     print("No matching SST asset: no field is plotted.")
 else:
     variable = next(name for name in sst.data_vars if sst[name].ndim >= 2)
     field = np.asarray(sst[variable]).squeeze()[::8, ::8]
     fig, axis = plt.subplots(figsize=(8, 4))
-    image = axis.imshow(field, origin="lower", aspect="auto", cmap=CMAP, interpolation="nearest",
-                        extent=(float(sst["lon"].min()), float(sst["lon"].max()),
-                                float(sst["lat"].min()), float(sst["lat"].max())),
-                        **color_limits("l4_sst"))
+    sst_extent = (float(sst["lon"].min()), float(sst["lon"].max()),
+                  float(sst["lat"].min()), float(sst["lat"].max()))
+    image = axis.imshow(field, origin="lower", aspect=map_aspect(sst_extent), cmap=CMAP,
+                        interpolation="nearest", extent=sst_extent, **color_limits("l4_sst"))
     axis.set(xlabel="longitude [°]", ylabel="latitude [°]", title=f"Retrieved box: {variable}")
     add_coastlines(axis)
     fig.colorbar(image, ax=axis, label=variable)
@@ -1670,7 +1779,7 @@ else:
     display_figure(fig)
     print("The image is a decimated display of the returned native-coordinate field.")
 """),
-    md("""## 8. A multi-source closed time range
+        md("""## 8. A multi-source closed time range
 
 Requesting several sources over one time range returns a dict keyed by token,
 each entry carrying that source's own time axis. Those axes differ, because the
@@ -1679,7 +1788,7 @@ reconcile them onto a common cadence. Reconciliation is a modelling decision,
 so it belongs to the renderer and the context window rather than to the fetch.
 
 The requested interval is **closed**, meaning both endpoints are included."""),
-    code("""
+        code("""
 window = TimeRange(queryset.dates[0], queryset.dates[1])
 stack = load_multisource_time_series_nc(catalog, ("l4_sst", "l4_ssh", "l3_swot"), box, window, config=config)
 for token, value in stack.items():
@@ -1687,7 +1796,7 @@ for token, value in stack.items():
     print(f"{token:9s} time steps={steps:2d}  " + ("no asset matched" if value is None else f"variables={list(value.data_vars)[:4]}"))
 print("Different step counts are expected. These products sample time differently.")
 """),
-    md("""## 9. Points and antimeridian boxes
+        md("""## 9. Points and antimeridian boxes
 
 Two behaviours are worth stating explicitly, because each is a place where a
 plausible-looking wrong answer is easy to produce.
@@ -1701,7 +1810,7 @@ meaning the floats were not there.
 from 170 to −170 would be either empty or global depending on which comparison
 ran first, so the geometry is represented explicitly as two rectangles and
 every downstream test stays a simple interval comparison."""),
-    code("""
+        code("""
 argo = load_bbox_nc(catalog, date, box, "argo", config=config)
 wrapped = GeoBox(170, -170, 10, 30, wraps_antimeridian=True)
 print("Argo records in the box:", 0 if argo is None else next(iter(argo.sizes.values())))
@@ -1709,7 +1818,7 @@ print(f"wrapped request has {len(wrapped.segments())} explicit segments:")
 for segment in wrapped.segments():
     print("   ", segment.to_dict())
 """),
-    code("""
+        code("""
 fig, axes = plt.subplots(1, 2, figsize=(11, 3.8))
 if argo is not None and all(key in argo for key in ("lon", "lat")):
     axes[0].scatter(np.asarray(argo["lon"]), np.asarray(argo["lat"]), s=26, alpha=.75,
@@ -1731,17 +1840,19 @@ fig.tight_layout()
 display_figure(fig)
 print("The two rectangles are what every downstream interval test sees.")
 """),
-    code("""
+        code("""
 for value in [tile, sst, argo, *stack.values()]:
     if value is not None and callable(close := getattr(value, "close", None)):
         close()
 print("Closed opened datasets.")
 """),
+    ],
+)
 
-])
-
-write("ml_configuration_cookbook.ipynb", [
-    md("""# ML renderer configuration reference
+write(
+    "ml_configuration_cookbook.ipynb",
+    [
+        md("""# ML renderer configuration reference
 
 A renderer turns one source over one patch into an array, and the choice of
 renderer sets the tensor structure everything downstream has to handle: whether
@@ -1763,8 +1874,10 @@ loader see the
 [ML use cases notebook](spatio_temporal_query_generation.ipynb), and for
 filters and coverage see the
 [QuerySet and filter deep-dive](data_retrieval_workflows.ipynb)."""),
-    code(SETUP), code(PLOTTING), code(LOAD),
-    md("""## The row every configuration uses
+        code(SETUP),
+        code(PLOTTING),
+        code(LOAD),
+        md("""## The row every configuration uses
 
 Every configuration below renders the same drawn row. Holding the row fixed
 means any difference in the printed output comes from the renderer rather than
@@ -1776,7 +1889,7 @@ The draw is conditioned on recorded SWOT and SSH coverage, so the shared row
 carries the sparse source alongside the dense analyses and every panel below
 has data to show. The [deep-dive](data_retrieval_workflows.ipynb) explains what
 those requirements read."""),
-    code("""
+        code("""
 from ocean_taco import CoverageRequirement, GeoBox, PatchSize, QueryFilter, draw_queryset, select_queryset
 from ocean_taco.render import Native, Points, Resample, VectorPair
 from ocean_taco.torch import OceanTACODataset
@@ -1811,12 +1924,12 @@ def show_grid(axis, record, title, component=None, key=None):
     # degrees and can take a coastline instead of counting pixels.
     extent = geographic_extent(record)
     drawn = axis.imshow(image, origin="lower", cmap=CMAP, interpolation="nearest",
-                        aspect="auto", extent=extent, **color_limits(key))
+                        aspect=map_aspect(extent), extent=extent, **color_limits(key))
     axis.set(title=f"{title}: shape {data.shape}", xlabel="longitude [°]", ylabel="latitude [°]")
     add_coastlines(axis)
     axis.figure.colorbar(drawn, ax=axis, shrink=.8)
 """),
-    md("""## `Resample`: fixed grids and multimodal fusion
+        md("""## `Resample`: fixed grids and multimodal fusion
 
 `Resample((H, W), support_threshold)` puts every source on one grid, so each
 becomes `(T, H, W)` with the same `H` and `W`, channels concatenate, and
@@ -1839,7 +1952,7 @@ below are expected and are kept visible rather than suppressed. A uniform
 comparison grid keeps these configurations readable side by side, while
 `native_shape` in each payload records the resolution the data actually
 carries."""),
-    code("""
+        code("""
 fixed = {"l4_sst": Resample((64, 64), .5), "l4_ssh": Resample((64, 64), .5)}
 print("fixed grids:")
 fixed_sample = render(fixed)
@@ -1847,14 +1960,14 @@ fusion = {**fixed, "l3_swot": Resample((64, 64), .5)}
 print("with SWOT fused in:")
 fusion_sample = render(fusion)
 """),
-    code("""
+        code("""
 fig, axes = plt.subplots(1, 3, figsize=(14, 4), constrained_layout=True)
 for axis, token in zip(axes, ("l4_sst", "l4_ssh", "l3_swot")):
     show_grid(axis, fusion_sample[token], token, key=token)
 display_figure(fig)
 print("All three share one model-facing grid, and their masks stay separate.")
 """),
-    md("""## `VectorPair`: two components as one field
+        md("""## `VectorPair`: two components as one field
 
 Rendered as independent sources, an eastward and a northward velocity
 component can disagree about where they are valid: a cell ends up with a valid
@@ -1865,7 +1978,7 @@ rather than two `(T, H, W)` entries, `valid_mask` covers cells where **both**
 components have support, and `pair_available` is the sample-level Boolean. The
 two components come from the same underlying asset, so they are also fetched
 once rather than twice."""),
-    code("""
+        code("""
 vectors = {"velocity": VectorPair(Resample((64, 64), .5))}
 print("components:", vectors["velocity"].components)
 velocity_sample = render(vectors)
@@ -1877,7 +1990,7 @@ if data.shape[0]:
     print(f"v range=[{np.nanmin(data[:, 1]):.3f}, {np.nanmax(data[:, 1]):.3f}] m/s")
     print(f"speed max={np.nanmax(speed):.3f} m/s, pair_available={bool(velocity['pair_available'])}")
 """),
-    code("""
+        code("""
 fig, axes = plt.subplots(1, 3, figsize=(14, 4), constrained_layout=True)
 # The components are signed, so they get a range symmetric about zero, which
 # puts the colormap's white at no flow. Speed is a magnitude and starts at zero.
@@ -1888,7 +2001,7 @@ if data.shape[0]:
     speed = np.hypot(data[0][0], data[0][1])
     extent = geographic_extent(velocity)
     drawn = axes[2].imshow(speed, origin="lower", cmap=CMAP, interpolation="nearest",
-                           aspect="auto", extent=extent, **color_limits("speed"))
+                           aspect=map_aspect(extent), extent=extent, **color_limits("speed"))
     # The arrows are placed on the same degree axes as the image, so the quiver
     # grid is subsampled from the record's own longitude and latitude vectors.
     step = max(1, speed.shape[0] // 16)
@@ -1903,7 +2016,7 @@ else:
 display_figure(fig)
 print("One shared mask governs both components, so every drawn arrow has support in each.")
 """),
-    md("""## Sparse and dense sources in one configuration
+        md("""## Sparse and dense sources in one configuration
 
 **A missing SWOT cell records that the satellite did not sample there**, which
 is the distinction that mixing a complete L4 analysis with a sparse L3 swath
@@ -1911,7 +2024,7 @@ has to preserve. A value cannot carry it, since zero is a perfectly plausible
 sea-level anomaly. The masks carry it instead, so a model consuming both
 sources should read `valid_mask` rather than testing values against a
 sentinel, and a loss should be masked by it."""),
-    code("""
+        code("""
 sparse_dense = {"l4_sst": Resample((64, 64), .5), "l3_swot": Resample((64, 64), .5)}
 sparse_sample = render(sparse_dense)
 for token in sparse_dense:
@@ -1920,7 +2033,7 @@ for token in sparse_dense:
         print(f"{token:10s} valid fraction={mask.mean():.3f}")
 print("A low valid fraction is evidence about sampling, not about the ocean.")
 """),
-    md("""## `Points`: ragged Argo records
+        md("""## `Points`: ragged Argo records
 
 Argo measurements are float profiles at their own positions rather than a
 field, so `Points` returns ragged records carrying coordinates and pressures
@@ -1942,7 +2055,7 @@ The left panel below carries a single marker because a float profiles where it
 drifts, so all of its records share one position and differ in depth, which the
 right panel resolves as a temperature profile. Across the unconditioned draw
 surveyed above, one float in a 256 km patch is the ordinary count."""),
-    code("""
+        code("""
 points = {"argo": Points(variable="TEMP", pres_range=(0, 200))}
 argo_draw = draw_queryset(queryset, requested_row_count=1, seed=29,
                           record_path=DRAW_DIR / "argo-draw.json",
@@ -1958,7 +2071,7 @@ for key in ("data", "lat", "lon", "pres"):
         print(f"  {key:6s} shape={tuple(np.asarray(record[key]).shape)}")
 print(f"{int(np.asarray(record['data']).size)} point records. The count is per patch and varies.")
 """),
-    code("""
+        code("""
 fig, axes = plt.subplots(1, 2, figsize=(11, 4), constrained_layout=True)
 lon, lat = np.asarray(record.get("lon", [])), np.asarray(record.get("lat", []))
 values = np.asarray(record["data"]).reshape(-1)
@@ -1990,7 +2103,7 @@ axes[0].set(xlabel="longitude [°]", ylabel="latitude [°]")
 display_figure(fig)
 print("Points keep their own coordinates and pressures, and nothing is rasterised onto a grid.")
 """),
-    code("""
+        code("""
 # How often does an unconditioned draw contain floats at all?
 survey = draw_queryset(queryset, requested_row_count=20, seed=29,
                        record_path=DRAW_DIR / "argo-survey-draw.json")
@@ -1999,7 +2112,7 @@ counts = [int(np.asarray(survey_dataset[index]["argo"]["data"]).size) for index 
 print(f"rows with at least one profile: {sum(count > 0 for count in counts)} of {len(counts)}")
 print("Zero is the ordinary case at this patch size, which is why the configuration above conditions its draw.")
 """),
-    md("""## `Native`: the source grid, and bucketing
+        md("""## `Native`: the source grid, and bucketing
 
 Where `Resample` pays interpolation for a uniform grid, `Native()` keeps the
 source's own grid, so no cell is interpolated or invented. Shapes then vary
@@ -2011,21 +2124,21 @@ within and across buckets by default and a printed bucket list would otherwise
 depend on the seed. The
 [ML use cases notebook](spatio_temporal_query_generation.ipynb) runs this
 sampler against a real `DataLoader`."""),
-    code("""
+        code("""
 native_sample = render({"l3_swot": Native()})
 resampled = np.asarray(fusion_sample["l3_swot"]["data"])
 native = np.asarray(native_sample["l3_swot"]["data"])
 print(f"native shape={native.shape}, resampled shape={resampled.shape}")
 print("Native preserves the source grid exactly. Resample fixes the shape and pays interpolation for it.")
 """),
-    code("""
+        code("""
 fig, axes = plt.subplots(1, 2, figsize=(11, 4), constrained_layout=True)
 show_grid(axes[0], native_sample["l3_swot"], "Native", key="l3_swot")
 show_grid(axes[1], fusion_sample["l3_swot"], "Resample (64, 64)", key="l3_swot")
 display_figure(fig)
 print("Same row and same colour range, so the difference between the panels is resolution alone.")
 """),
-    code("""
+        code("""
 from ocean_taco.torch import ShapeBucketSampler
 shapes = [(32, 48), (32, 48), (40, 48), (40, 48), (32, 48)]
 sampler = ShapeBucketSampler(shapes, batch_size=2, seed=19, shuffle=False)
@@ -2035,14 +2148,14 @@ print("batches:", batches)
 for batch in batches:
     print("  ", [shapes[index] for index in batch], "-> uniform:", len({shapes[index] for index in batch}) == 1)
 """),
-    md("""## Regional and antimeridian boxes
+        md("""## Regional and antimeridian boxes
 
 A regional box resolves to a single segment. A box crossing the antimeridian
 resolves to two, because a single interval from 170 to −170 would be either
 empty or global depending on which comparison ran first. Splitting it keeps
 every downstream test a simple interval comparison, and the
 [deep-dive](data_retrieval_workflows.ipynb) plots the geometry."""),
-    code("""
+        code("""
 regional = GeoBox(-80, -30, 10, 45)
 wrapped = GeoBox(170, -170, 10, 30, wraps_antimeridian=True)
 print("regional segments:", len(regional.segments()))
@@ -2050,7 +2163,7 @@ for segment in wrapped.segments():
     print("  wrapped segment:", segment.to_dict())
 print(f"regional selection: {select_queryset(queryset, QueryFilter(box=regional)).count:,} pairs")
 """),
-    md("""## Normalisation
+        md("""## Normalisation
 
 Normalisation belongs to the experiment, not to the loader, and has to be
 recorded alongside it. The loader therefore returns decoded values in their
@@ -2063,7 +2176,7 @@ the patch, so the mask genuinely excludes cells and the NaN behaviour is
 visible. The comparison at the end comes out differently under zero-filling,
 which treats every unobserved cell as a measured zero and so biases the mean
 towards zero."""),
-    code("""
+        code("""
 import torch
 def normalise_valid(data, mask, mean, std):
     output = torch.full_like(data, float("nan"))
@@ -2079,16 +2192,19 @@ print(f"{int((~mask).sum())} invalid cells, all still NaN: {bool(torch.isnan(nor
 filled = torch.nan_to_num(values, nan=0.0)
 print(f"masked mean={mean:.4f} against zero-filled mean={filled.mean():.4f}")
 """),
-])
+    ],
+)
 
-write("plot_hurricane_milton.ipynb", [
-    md("""# Hurricane Milton: wind and SSH across products
+write(
+    "plot_hurricane_milton.ipynb",
+    [
+        md("""# Hurricane Milton: wind and SSH across products
 
 The maintained helper produces the four-date, three-column projected figure:
 L4 wind with vectors, L3 along-track SSH, and L3 SWOT. The dense SWOT product
 is always requested; a missing source is shown as missing rather than hidden."""),
-    code(SETUP),
-    code("""
+        code(SETUP),
+        code("""
 from ocean_taco import CatalogConfig
 from ocean_taco.retrieve import load_hf_dataset
 from ocean_taco.viz.paper.plot_hurricane_milton import DEFAULT_DATES, close_data, load_date, make_figure
@@ -2096,8 +2212,8 @@ config = CatalogConfig()
 catalog = load_hf_dataset(config)
 print(f"catalog={config.resolved_catalog_url}; revision={config.revision}; dates={DEFAULT_DATES}")
 """),
-    md("## Retrieve every product and measure the local execution path"),
-    code("""
+        md("## Retrieve every product and measure the local execution path"),
+        code("""
 from time import perf_counter
 started = perf_counter()
 rows = {date: load_date(catalog, date, config=config) for date in DEFAULT_DATES}
@@ -2105,7 +2221,7 @@ for date, products in rows.items(): print(date, {token: dict(data.sizes) for tok
 print(f"elapsed={perf_counter() - started:.1f}s; cache={config.cache_dir}")
 if any("l3_swot" not in products for products in rows.values()): raise RuntimeError("L3 SWOT is required for this tutorial figure.")
 """),
-    code("""
+        code("""
 from IPython.display import display
 figure = make_figure(rows, DEFAULT_DATES)
 display_figure(figure)
@@ -2114,17 +2230,20 @@ import matplotlib.pyplot as plt
 plt.close(figure)
 print("Closed datasets and figure.")
 """),
-])
+    ],
+)
 
-write("plot_hurricane_milton_cross_product.ipynb", [
-    md("""# Hurricane Milton: SSH cross-product comparison
+write(
+    "plot_hurricane_milton_cross_product.ipynb",
+    [
+        md("""# Hurricane Milton: SSH cross-product comparison
 
 This workflow overlays L4 DUACS, L3 along-track, and L3 SWOT in projected
 geography, then compares each L3 product with L4 after interpolation to the
 observation coordinates. It reports deterministic-subsample visualisation,
 correlation, RMSE, and a 1:1 reference line."""),
-    code(SETUP),
-    code("""
+        code(SETUP),
+        code("""
 from ocean_taco import CatalogConfig
 from ocean_taco.retrieve import load_hf_dataset
 from ocean_taco.viz.paper.plot_hurricane_milton_cross_product import close_products, load_products, make_figure
@@ -2135,7 +2254,7 @@ data = load_products(catalog, DATE, config=config)
 print(f"date={DATE}; revision={config.revision}; products={list(data)}")
 if set(data) != {"l4_ssh", "l3_ssh", "l3_swot"}: raise RuntimeError("This tutorial requires all three SSH products, including L3 SWOT.")
 """),
-    code("""
+        code("""
 from IPython.display import display
 figure = make_figure(data, DATE)
 display_figure(figure)
@@ -2144,5 +2263,5 @@ import matplotlib.pyplot as plt
 plt.close(figure)
 print("Closed datasets and figure. The scatter uses no nearest-grid shortcut and never fills missing L4 values with zero.")
 """),
-])
-
+    ],
+)
