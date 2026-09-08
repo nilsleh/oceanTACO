@@ -78,6 +78,52 @@ Measure steady-state epochs, not only the first epoch. Remote URLs follow the
 same planning split, although their throughput also depends on network and
 cache behaviour.
 
+`torch/loader.py` adapts OceanTACO sources to the standard PyTorch
+`DataLoader`: `CoreSourceLoader` resolves catalog assets in the parent, and
+`PlannedSourceLoader` reads geographic/time crops using worker-local handles.
+PyTorch still owns batching, worker scheduling, shuffling, and prefetching.
+
+Local assets use a bounded handle cache in each worker even when `cache_dir`
+is omitted. `CatalogConfig(max_open_files=16)` controls the limit; local files
+are opened in place. Coordinate normalization is cached with each handle.
+Eviction and `dataset.source_loader.close()` release handles and their cached
+coordinate views. Fork and spawn workers start with fresh handles.
+
+The built-in planned loader supports PyTorch's batched `__getitems__` path.
+It groups requests by asset and required variables, shares daily crops across
+overlapping context and target windows, and returns samples in the requested
+order. These crop caches last for one batch. Custom loaders retain the ordered
+`__getitem__` behavior. ML reads select only requested dense variables (paired
+currents together); Argo retains its point fields, and the scientific retrieval
+functions retain all variables.
+
+For local measurements, `scripts/dev/benchmark_local_draw.py` preserves its
+128-row, 128 km, 128 × 128, four-worker defaults. For example:
+
+```bash
+python scripts/dev/benchmark_local_draw.py --taco-path /path/to/OceanTACO \
+    --queryset release/querysets/v2/256-training --grid-size 64 \
+    --workers 2 --prefetch-factor 1 --epochs 5 --persistent-workers \
+    --json-output throughput.json
+```
+
+Compare published 128/256/512 km sets, grid sizes 32/64/128/256, worker counts
+0/2/4/8, and prefetch factors 1/2. `--date-end`, `--context-start`,
+`--context-end`, and `--shuffle` exercise multiple dates and contexts.
+`--diagnostic-patch -90 -56 64` creates an explicit 64 km seam request;
+repeat the flag to include other locations. Diagnostic requests bypass the
+coverage-backed draw. `--sources` also accepts `argo` and `glorys_currents`.
+
+The report separates QuerySet reading, drawing, planning (including loader
+construction), first-batch latency, post-first-batch throughput, delivery and
+worker service latency percentiles, file opens, cache hits, and process peak
+RSS. RSS is a per-process high-water mark and includes inherited parent memory
+under fork. A short prefetched run can overstate post-first-batch throughput;
+compare complete epoch rates and repeat measurements with the same settings.
+
+Measured results, validation scope, and reproducible artifacts are in the
+[throughput validation report](throughput-validation.md).
+
 ## Sample schema and collation
 
 Each sample is a flat mapping keyed by the requested source name, plus `query`
@@ -102,6 +148,12 @@ sources = {
 `VectorPair` keeps GLORYS eastward/northward components together with one joint
 validity mask. `Points` preserves Argo observations as ragged records. Neither
 is silently coerced into a dense scalar grid.
+
+For resampled vectors, `source_valid` is `support > 0` on the output grid,
+using joint support from both components. This corrects the earlier native-grid
+`source_valid` mask, whose varying shape could prevent batch collation.
+`support`, `support_mask`, `valid_mask`, data, and coordinates retain their
+previous values; native vector masks are unchanged.
 
 ## Dataset contract and options
 

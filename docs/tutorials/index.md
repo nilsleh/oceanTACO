@@ -37,6 +37,16 @@ different levels of completeness, which is why OceanTACO works out per catalog
 row whether an asset is already local instead of reading that from
 configuration.
 
+## Loader configuration
+
+The tutorials continue to use PyTorch `DataLoader`. OceanTACO's source adapter
+plans catalog requests in the parent and reuses cropped reads within each batch.
+`CatalogConfig(max_open_files=16)` limits each process's source-loader file cache,
+including local files opened without `cache_dir`. For repeated epochs, reuse one
+DataLoader with persistent workers; the single-batch illustrations do not need
+them. See [worker usage](ml_dataset.ipynb) and the
+[throughput validation report](../throughput-validation.md).
+
 ## What each notebook covers
 
 Read them in the order below. The first is the entry point and links out to the
@@ -71,6 +81,9 @@ plot_hurricane_milton_cross_product
 
 The `.ipynb` files are generated. `scripts/dev/restore_tutorial_notebooks.py`
 is the source of truth for their narrative and code, and edits made directly to
-a notebook are reverted the next time it runs. Regenerate with that script, then
-execute with `scripts/dev/execute_tutorial_notebooks.py`, which records partial
+a notebook are reverted the next time it runs. The generator currently differs
+from the checked-in notebooks in some workflow and prose sections, so review
+generated diffs before replacing those notebooks. Loader guidance is maintained
+in both locations. After regeneration, execute with
+`scripts/dev/execute_tutorial_notebooks.py`, which records partial
 output and a traceback into notebook metadata when a cell fails.

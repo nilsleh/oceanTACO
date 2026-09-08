@@ -178,7 +178,10 @@ class Resample:
             scaled_data = functional.interpolate(input_tensor, **keyword).numpy()
             support = functional.interpolate(mask_tensor, **keyword).squeeze(1).numpy()
         support_mask = support >= self.support_threshold
-        output_valid = (support > 0.0) & support_mask
+        # As for scalar resampling, expose joint support on the output grid.
+        # The native mask above is only the input to the resampling kernel.
+        source_valid = support > 0.0
+        output_valid = source_valid & support_mask
         output = np.divide(
             scaled_data,
             support[:, None, :, :],

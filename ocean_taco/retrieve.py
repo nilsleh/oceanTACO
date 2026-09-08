@@ -6,6 +6,7 @@ import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
+from functools import lru_cache
 
 from .access import LocalCacheBackend
 from .catalog import CatalogConfig, load_catalog
@@ -48,12 +49,10 @@ REGION_BIT: dict[str, int] = {
 _CACHE_BACKENDS: dict[CatalogConfig, LocalCacheBackend] = {}
 
 
-def _cache_for(config: CatalogConfig) -> LocalCacheBackend | None:
-    if config.cache_dir is None:
-        return None
+def _cache_for(config: CatalogConfig) -> LocalCacheBackend:
     cache = _CACHE_BACKENDS.get(config)
     if cache is None:
-        cache = LocalCacheBackend(config.cache_dir, revision=config.revision)
+        cache = LocalCacheBackend(config.cache_dir, revision=config.revision, max_open_files=config.max_open_files)
         _CACHE_BACKENDS[config] = cache
     return cache
 
@@ -201,7 +200,7 @@ def _download_dataset(row, config: CatalogConfig, cache: LocalCacheBackend | Non
         path = _local_path(url)
         if not os.path.exists(path):
             raise FileNotFoundError(f"Catalog references a local asset that does not exist: {path}")
-        return xr.open_dataset(path, engine="h5netcdf")
+        return cache.open_path(path) if cache is not None else xr.open_dataset(path, engine="h5netcdf")
 
     return _open_remote(url, config, cache)
 
@@ -214,7 +213,7 @@ def _download_location(location: str, config: CatalogConfig, cache: LocalCacheBa
         path = _local_path(location)
         if not os.path.exists(path):
             raise FileNotFoundError(f"Catalog references a local asset that does not exist: {path}")
-        return xr.open_dataset(path, engine="h5netcdf")
+        return cache.open_path(path) if cache is not None else xr.open_dataset(path, engine="h5netcdf")
 
     return _open_remote(location, config, cache)
 
@@ -293,9 +292,12 @@ def _merge_points(datasets):
     dimensions = {_point_dimension(dataset) for dataset in datasets}
     if len(dimensions) != 1:
         raise ValueError("Ragged-point assets use incompatible record dimensions.")
+    dimension = dimensions.pop()
+    if len(datasets) == 1 and all(dimension in variable.dims for variable in datasets[0].data_vars.values()):
+        return datasets[0]
     return xr.concat(
         datasets,
-        dim=dimensions.pop(),
+        dim=dimension,
         data_vars="all",
         coords="minimal",
         compat="override",
@@ -318,7 +320,10 @@ def _canonicalise_grid_coordinates(dataset):
     # have used [0, 360], but exposing that here would make wrapped GeoBoxes
     # ambiguous and can duplicate the antimeridian.
     lon = ((lon + 180.0) % 360.0) - 180.0
-    result = dataset.assign_coords(lat=lat, lon=lon).sortby("lat").sortby("lon")
+    result = dataset.assign_coords(lat=lat, lon=lon)
+    for coordinate in ("lat", "lon"):
+        if np.any(np.diff(result[coordinate].values) < 0):
+            result = result.sortby(coordinate)
     for coordinate in ("lat", "lon"):
         values = np.asarray(result[coordinate].values, dtype=np.float64)
         if np.unique(values).size != values.size:
@@ -326,7 +331,17 @@ def _canonicalise_grid_coordinates(dataset):
     return result
 
 
-def _merge_grid_tiles(datasets, *, coordinate_tolerance: float):
+@lru_cache(maxsize=32)
+def _missing_dtype(dtype):
+    """Ask xarray how full-axis reindexing promotes this native dtype."""
+    import numpy as np
+    import xarray as xr
+
+    probe = xr.DataArray(np.empty(0, dtype=dtype), dims="cell", coords={"cell": []})
+    return probe.reindex(cell=[0]).dtype
+
+
+def _merge_grid_tiles(datasets, *, coordinate_tolerance: float, box: GeoBox | None = None, coordinates_normalized: bool = False, read_tile=None):
     """Merge spatial tiles after snapping documented coordinate jitter.
 
     The source files are authoritative for their values.  This helper only
@@ -336,30 +351,73 @@ def _merge_grid_tiles(datasets, *, coordinate_tolerance: float):
     import numpy as np
     import xarray as xr
 
-    canonical = tuple(_canonicalise_grid_coordinates(dataset) for dataset in datasets)
+    canonical = tuple(datasets) if coordinates_normalized else tuple(_canonicalise_grid_coordinates(dataset) for dataset in datasets)
     if len(canonical) == 1:
-        return canonical[0]
+        return canonical[0] if box is None else _crop(canonical[0], box)
     if coordinate_tolerance <= 0:
         raise ValueError("coordinate_tolerance must be positive.")
     lat = _cluster_axis((dataset["lat"].values for dataset in canonical), coordinate_tolerance)
     lon = _cluster_axis((dataset["lon"].values for dataset in canonical), coordinate_tolerance)
+    # Cluster complete lightweight axes first: cropping before clustering
+    # changes cluster means and can change inclusion at a request boundary.
+    selected_lat, selected_lon = lat, lon
+    if box is not None:
+        selected_lat = lat[(lat >= box.lat_min) & (lat <= box.lat_max)]
+        keep_lon = np.zeros(lon.shape, dtype=bool)
+        for segment in box.segments():
+            keep_lon |= (lon >= segment.lon_min) & (lon <= segment.lon_max)
+        selected_lon = lon[keep_lon]
     aligned = []
-    for dataset in canonical:
+    for tile_index, dataset in enumerate(canonical):
         lat_indices = _cluster_indices(lat, np.asarray(dataset["lat"].values, dtype=np.float64), coordinate_tolerance)
         lon_indices = _cluster_indices(lon, np.asarray(dataset["lon"].values, dtype=np.float64), coordinate_tolerance)
-        aligned.append(
-            dataset.assign_coords(lat=lat[lat_indices], lon=lon[lon_indices])
-            .sortby("lat")
-            .sortby("lon")
-            .reindex(lat=lat, lon=lon)
+        tile_lat, tile_lon = lat[lat_indices], lon[lon_indices]
+        lat_keep = np.flatnonzero(np.isin(tile_lat, selected_lat))
+        lon_keep = np.flatnonzero(np.isin(tile_lon, selected_lon))
+        # A very small LRU may have evicted this handle during the axes pass.
+        # Reopen through the LRU and detach the crop before opening another tile.
+        if read_tile is not None:
+            dataset = read_tile(tile_index)
+        # isel precedes reindex/merge: only the requested cells are decoded.
+        tile = dataset.isel(lat=lat_keep, lon=lon_keep).assign_coords(
+            lat=tile_lat[lat_keep], lon=tile_lon[lon_keep]
         )
+        tile = _materialise_empty_variables(tile)
+        if read_tile is not None:
+            tile.load()
+        if box is not None:
+            # Full regional reindexing can promote integers even when every
+            # requested cell is present. Preserve that observable native dtype.
+            missing = {dim for dim, count in (("lat", lat.size), ("lon", lon.size))
+                       if dataset.sizes[dim] < count}
+            for name, variable in tile.variables.items():
+                if missing.intersection(variable.dims):
+                    dtype = _missing_dtype(variable.dtype)
+                    if dtype != variable.dtype:
+                        tile[name] = tile[name].astype(dtype)
+        aligned.append(tile.reindex(lat=selected_lat, lon=selected_lon))
     try:
         # All tiles are now labelled on the same canonical axes.  ``merge``
         # unions their non-overlapping cells; ``combine_by_coords`` would
         # concatenate the shared seam coordinate a second time.
-        return xr.merge(aligned, combine_attrs="override", compat="no_conflicts", join="exact").sortby("lat").sortby("lon")
+        merged = xr.merge(aligned, combine_attrs="override", compat="no_conflicts", join="exact").sortby("lat").sortby("lon")
+        return merged if box is None else _crop(merged, box)
     except ValueError as error:
         raise ValueError("Region tiles disagree on overlapping grid values after coordinate alignment.") from error
+
+
+def _materialise_empty_variables(dataset):
+    """Avoid backend indexing of empty arrays after chained lazy selections."""
+    import numpy as np
+
+    empty = [name for name, variable in dataset.variables.items() if variable.size == 0]
+    if not empty:
+        return dataset
+    result = dataset.copy(deep=False)
+    for name in empty:
+        variable = dataset[name].variable
+        result[name] = variable.copy(data=np.empty(variable.shape, dtype=variable.dtype))
+    return result
 
 
 def _crop(dataset, box: GeoBox):
@@ -369,7 +427,7 @@ def _crop(dataset, box: GeoBox):
     parts = []
     for segment in box.segments():
         part = dataset.sel(lat=slice(segment.lat_min, segment.lat_max), lon=slice(segment.lon_min, segment.lon_max))
-        parts.append(part)
+        parts.append(_materialise_empty_variables(part))
     if not box.wraps_antimeridian:
         return parts[0]
     # Preserve xarray's current all-variable concatenation semantics across
@@ -390,9 +448,8 @@ def load_bbox_nc(
     """Read and coordinate-merge all source tiles intersecting a GeoBox."""
     config = config or CatalogConfig()
     when_string, filename = _date_string(when), _filename(token)
-    source = get_modality(token)
     cache = backend or _cache_for(config)
-    datasets = []
+    assets = []
     seen_urls: set[str] = set()
     for segment in box.segments():
         rows = _rows(catalog, when_string, segment, filename)
@@ -401,14 +458,8 @@ def load_bbox_nc(
             if url in seen_urls:
                 continue
             seen_urls.add(url)
-            dataset = _download_dataset(row, config, cache, when_string, filename)
-            datasets.append(_clean_swot(dataset) if token == "l3_swot" else dataset)
-    if not datasets:
-        return None
-    if source.is_points:
-        return _merge_points([_crop_points(dataset, box) for dataset in datasets])
-    merged = _merge_grid_tiles(datasets, coordinate_tolerance=get_modality(token).regularity_tolerance)
-    return _crop(merged, box)
+            assets.append(ResolvedAsset(url, _tile_from_row(row)))
+    return _load_planned_bbox_nc(assets, when_string, box, token, config=config, backend=cache)
 
 
 def load_bbox_swot_nc(
@@ -511,14 +562,14 @@ def load_multisource_time_series_nc(
             # Source timestamps, rather than catalog row/date order, determine
             # the returned temporal axis.  Per-date spatial merging has already
             # completed inside load_bbox_nc.
-            result[token] = xr.concat(
+            result[token] = (available[0] if len(available) == 1 and all("time" in variable.dims for variable in available[0].data_vars.values()) else xr.concat(
                 available,
                 dim="time",
                 data_vars="all",
                 coords="minimal",
                 compat="no_conflicts",
                 combine_attrs="override",
-            ).sortby("time")
+            )).sortby("time")
     return result
 
 AssetPlan = dict[tuple[str, str, GeoBox], tuple[ResolvedAsset, ...]]
@@ -575,19 +626,36 @@ def _load_planned_bbox_nc(
     *,
     config: CatalogConfig,
     backend: LocalCacheBackend | None,
+    variables: tuple[str, ...] | None = None,
 ):
     """Fetch and render-ready merge of catalog-free planned asset locations."""
-    datasets = [_download_location(asset.location, config, backend) for asset in assets]
+    backend = backend or _cache_for(config)
+    source = get_modality(token)
+    assets = tuple(assets)
+
+    def read_asset(index):
+        dataset = _download_location(assets[index].location, config, backend)
+        if not source.is_points:
+            dataset = backend.canonical_grid(dataset)
+        if variables is not None:
+            dataset = dataset[list(variables)]
+        return _clean_swot(dataset) if token == "l3_swot" else dataset
+
+    if source.is_points:
+        # Crop and detach before the next open, even with a one-file LRU.
+        return _merge_points([_crop_points(read_asset(index), box).load() for index in range(len(assets))])
+    datasets = [read_asset(index) for index in range(len(assets))]
     if not datasets:
         return None
-    if token == "l3_swot":
-        datasets = [_clean_swot(dataset) for dataset in datasets]
-    if get_modality(token).is_points:
-        return _merge_points([_crop_points(dataset, box) for dataset in datasets])
-    merged = _merge_grid_tiles(
-        datasets, coordinate_tolerance=get_modality(token).regularity_tolerance
+    return _merge_grid_tiles(
+        datasets, coordinate_tolerance=source.regularity_tolerance, box=box, coordinates_normalized=True,
+        read_tile=read_asset if len(assets) > backend.max_open_files else None,
     )
-    return _crop(merged, box)
+
+
+def _daily_cache_key(assets, when, box, token, variables):
+    source = get_modality(token)
+    return (tuple(assets), when, box, source.filename, variables)
 
 
 def load_planned_multisource_time_series_nc(
@@ -598,23 +666,30 @@ def load_planned_multisource_time_series_nc(
     *,
     config: CatalogConfig,
     backend: LocalCacheBackend | None = None,
+    variables_by_token: dict[str, tuple[str, ...] | None] | None = None,
+    daily_cache: dict | None = None,
 ) -> dict[str, object | None]:
     """Fetch a planned request without consulting a catalog in this process."""
     import xarray as xr
 
     result: dict[str, object | None] = {}
+    # A call-local cache also coalesces paired variables in shared assets.
+    daily_cache = {} if daily_cache is None else daily_cache
     for token in tokens:
-        per_day = [
-            _load_planned_bbox_nc(
-                plan.get((token, _date_string(day), box), ()),
-                _date_string(day),
-                box,
-                token,
-                config=config,
-                backend=backend,
-            )
-            for day in _days(time)
-        ]
+        per_day = []
+        variables = None if variables_by_token is None else variables_by_token[token]
+        for day in _days(time):
+            when = _date_string(day)
+            assets = plan.get((token, when, box), ())
+            key = _daily_cache_key(assets, when, box, token, variables)
+            if key not in daily_cache:
+                dataset = _load_planned_bbox_nc(
+                    assets, when, box, token, config=config, backend=backend, variables=variables
+                )
+                # Detach only the crop from file handles. Batch caches never
+                # retain full regional values or live lazy reads after eviction.
+                daily_cache[key] = None if dataset is None else dataset.load()
+            per_day.append(daily_cache[key])
         if get_modality(token).is_points:
             result[token] = _merge_points(
                 [dataset for dataset in per_day if dataset is not None]
@@ -630,12 +705,12 @@ def load_planned_multisource_time_series_nc(
         if not available:
             result[token] = None
         else:
-            result[token] = xr.concat(
+            result[token] = (available[0] if len(available) == 1 and all("time" in variable.dims for variable in available[0].data_vars.values()) else xr.concat(
                 available,
                 dim="time",
                 data_vars="all",
                 coords="minimal",
                 compat="no_conflicts",
                 combine_attrs="override",
-            ).sortby("time")
+            )).sortby("time")
     return result

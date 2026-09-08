@@ -169,7 +169,9 @@ print('worker loading completed')
         "__CACHE__", str(tmp_path / "cache")
     )
     environment = os.environ.copy()
-    environment["PYTHONPATH"] = str(ROOT)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        value for value in (str(ROOT), environment.get("PYTHONPATH")) if value
+    )
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=ROOT,

@@ -66,7 +66,12 @@ def _cluster_axis(values: Iterable[np.ndarray], tolerance: float) -> np.ndarray:
 
 def _cluster_indices(axis: np.ndarray, values: np.ndarray, tolerance: float) -> np.ndarray:
     """Map a source coordinate axis to its unique tolerance cluster."""
-    indices = np.abs(axis[:, None] - values[None, :]).argmin(axis=0)
+    # The canonical axis is sorted. Match nearest neighbours without building
+    # the quadratic (regional-axis x tile-axis) distance matrix. Ties choose
+    # the lower index, exactly as argmin did.
+    right = np.searchsorted(axis, values).clip(0, max(0, axis.size - 1))
+    left = (right - 1).clip(0)
+    indices = np.where(np.abs(axis[left] - values) <= np.abs(axis[right] - values), left, right)
     distances = np.abs(axis[indices] - values)
     if np.any(distances > tolerance):  # Defensive: every value built the axis.
         raise ValueError("A tile coordinate could not be matched within tolerance.")

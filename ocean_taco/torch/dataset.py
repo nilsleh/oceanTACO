@@ -16,7 +16,7 @@ from ..queryset import QuerySet
 from ..registry import ModalitySpec, get_modality
 from ..render import Native, Points, Resample, VectorPair, canonicalise_dense
 from ..sampling import QueryDraw, load_released_ocean_mask, replay_experiment
-from .loader import CoreSourceLoader
+from .loader import CoreSourceLoader, PlannedSourceLoader
 
 Renderer = Native | Resample | Points | VectorPair
 
@@ -324,6 +324,29 @@ class OceanTACODataset(Dataset):
             availability["target"] = target_availability
         output["availability"] = availability
         return _to_tensors(output)
+
+    def __getitems__(self, indices: Sequence[int]) -> list[dict[str, Any]]:
+        """Return ordered samples while sharing built-in loader reads per batch."""
+        indices = tuple(indices)
+        if not indices:
+            return []
+        if not isinstance(self.source_loader, PlannedSourceLoader):
+            return [self[index] for index in indices]
+        tokens = tuple(dict.fromkeys(
+            component
+            for request in self.source_requests
+            for component in (
+                request.renderer.components if isinstance(request.renderer, VectorPair)
+                else (request.token,)
+            )
+        ))
+        requests = []
+        for index in indices:
+            spec = self._spec_for(self.rows[index])
+            specs = (spec,) if spec.target_spec is None else (spec, spec.target_spec)
+            requests.extend((token, item) for item in specs for token in tokens)
+        with self.source_loader.batch(requests):
+            return [self[index] for index in indices]
 
 
 def _stack_fixed_grid(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:

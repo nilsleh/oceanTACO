@@ -24,8 +24,11 @@ class CatalogConfig:
     cache_dir: Path | str | None = None
     timeout_seconds: float = 30.0
     retries: int = 3
+    max_open_files: int = 16
 
     def __post_init__(self) -> None:
+        if isinstance(self.max_open_files, bool) or not isinstance(self.max_open_files, int) or self.max_open_files <= 0:
+            raise ValueError("max_open_files must be a positive integer.")
         if not self.repo_id:
             raise ValueError("repo_id cannot be empty.")
         if not self.revision:
@@ -55,6 +58,7 @@ class CatalogConfig:
             "cache_dir": str(self.cache_dir) if self.cache_dir is not None else None,
             "timeout_seconds": self.timeout_seconds,
             "retries": self.retries,
+            "max_open_files": self.max_open_files,
         }
 
 

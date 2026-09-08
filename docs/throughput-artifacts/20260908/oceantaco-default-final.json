@@ -1,0 +1,92 @@
+{
+  "configuration": {
+    "taco_path": "/p/project1/hai_uqmethodbox/nils/oceanTACO/results/generation_audit_20260828/port_20230329_verified/taco/OceanTACO",
+    "queryset": "/p/project1/hai_uqmethodbox/nils/oceanTACO-pr1/release/querysets/v2/128-training",
+    "date": "2023-03-29",
+    "date_end": null,
+    "samples": 128,
+    "sources": [
+      "l3_ssh",
+      "l3_swot"
+    ],
+    "seed": 42,
+    "batch_size": 16,
+    "grid_size": 128,
+    "workers": 4,
+    "prefetch_factor": 2,
+    "epochs": 1,
+    "persistent_workers": false,
+    "shuffle": false,
+    "max_open_files": 16,
+    "context_start": 0,
+    "context_end": 0,
+    "diagnostic_patch": null,
+    "json_output": "/tmp/oceantaco-default-final.json"
+  },
+  "startup": {
+    "queryset_read_seconds": 4.549853712785989,
+    "drawing_seconds": 1.2516137780621648,
+    "planning_seconds": 0.9830650170333683
+  },
+  "epochs": [
+    {
+      "epoch": 1,
+      "samples": 128,
+      "elapsed_seconds": 3.4180776609573513,
+      "samples_per_second": 37.447949606899556,
+      "batches_per_second": 2.3404968504312222,
+      "first_batch_seconds": 1.9703574441373348,
+      "steady_samples_per_second": 79.43720477675548,
+      "batch_latency_seconds": {
+        "p50": 0.001385558396577835,
+        "p90": 1.386959934956394,
+        "p95": 1.678658689546864,
+        "p99": 1.9120176932192405
+      },
+      "worker_service_seconds": {
+        "p50": 1.3919032874982804,
+        "p90": 1.769508184771985,
+        "p95": 1.7763209603261203,
+        "p99": 1.7817711807694285
+      },
+      "file_opens": 60,
+      "cache_hits": 204,
+      "peak_process_rss_bytes": 2176655360,
+      "available_samples": {
+        "l3_ssh": 128,
+        "l3_swot": 128
+      }
+    }
+  ],
+  "processes": {
+    "1401419": {
+      "pid": 1401419,
+      "file_opens": 16,
+      "cache_hits": 50,
+      "peak_rss_bytes": 2174816256,
+      "service_seconds": 1.1877040981780738
+    },
+    "1401482": {
+      "pid": 1401482,
+      "file_opens": 16,
+      "cache_hits": 50,
+      "peak_rss_bytes": 2176503808,
+      "service_seconds": 1.4944943829905242
+    },
+    "1401545": {
+      "pid": 1401545,
+      "file_opens": 14,
+      "cache_hits": 54,
+      "peak_rss_bytes": 2176655360,
+      "service_seconds": 1.2893121920060366
+    },
+    "1401608": {
+      "pid": 1401608,
+      "file_opens": 14,
+      "cache_hits": 50,
+      "peak_rss_bytes": 2174410752,
+      "service_seconds": 1.2407802289817482
+    }
+  },
+  "memory_note": "ru_maxrss high-water mark per process (includes inherited parent memory with fork); workers=0 measures the parent."
+}

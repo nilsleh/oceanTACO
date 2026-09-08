@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 from typing import Any, Literal
@@ -325,6 +325,27 @@ class SelectedPairs:
         for current, pair in enumerate(self.iter_pairs()):
             if current == rank:
                 return pair
+        raise AssertionError("Selected pair count changed during deterministic scan.")
+
+    def resolve_ranks(self, ranks: Iterable[int]) -> tuple[tuple[int, int], ...]:
+        """Resolve ordered or repeated ranks with one sparse-selection scan."""
+        ranks = tuple(ranks)
+        if not ranks:
+            return ()
+        if any(not 0 <= rank < self.count for rank in ranks):
+            raise IndexError("Selected pair rank is outside the selection.")
+        if self.is_cartesian:
+            width = len(self._dates)
+            return tuple((self._positions[rank // width], self._dates[rank % width]) for rank in ranks)
+        pending = iter(sorted(set(ranks)))
+        wanted = next(pending)
+        resolved = {}
+        for current, pair in enumerate(self.iter_pairs()):
+            if current == wanted:
+                resolved[current] = pair
+                wanted = next(pending, None)
+                if wanted is None:
+                    return tuple(resolved[rank] for rank in ranks)
         raise AssertionError("Selected pair count changed during deterministic scan.")
 
     def to_dict(self) -> dict[str, Any]:

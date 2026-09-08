@@ -131,7 +131,7 @@ def draw_queryset(
     ranks = _floyd_ordinals(selected.count, requested_row_count, seed)
     rows = tuple(
         queryset.patch_row(
-            *selected.resolve_rank(rank),
+            *pair,
             context_start_offset_days=selected.query_filter.context_start_offset_days,
             context_end_offset_days=selected.query_filter.context_end_offset_days,
             relation=selected.query_filter.relation,
@@ -139,7 +139,7 @@ def draw_queryset(
             target_start_offset_days=selected.query_filter.target_start_offset_days,
             target_end_offset_days=selected.query_filter.target_end_offset_days,
         )
-        for rank in ranks
+        for pair in selected.resolve_ranks(ranks)
     )
     record = _record(
         selected,
@@ -183,7 +183,7 @@ def replay_experiment(
         )
     rows = tuple(
         queryset.patch_row(
-            *selected.resolve_rank(rank),
+            *pair,
             context_start_offset_days=query_filter.context_start_offset_days,
             context_end_offset_days=query_filter.context_end_offset_days,
             relation=query_filter.relation,
@@ -191,7 +191,7 @@ def replay_experiment(
             target_start_offset_days=query_filter.target_start_offset_days,
             target_end_offset_days=query_filter.target_end_offset_days,
         )
-        for rank in ranks
+        for pair in selected.resolve_ranks(ranks)
     )
     if record.get("emitted_patch_id_digest") != content_sha256(
         [row["patch_id"] for row in rows]

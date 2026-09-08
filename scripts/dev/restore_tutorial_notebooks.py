@@ -593,40 +593,35 @@ print(f"inclusion_probability={draw.inclusion_probability:.6g}; record={DRAW_DIR
 """),
         md("""## 5. The sample schema, and one rendered source
 
-`dataset[i]` returns a flat dict keyed by source token, plus a `query` entry
-carrying the `PatchSpec` that produced it and an `availability` entry with one
-Boolean per source. Each source's own dict holds:
+`dataset[i]` returns a flat dictionary keyed by source token, a `query` entry
+containing the source `PatchSpec`, and one Boolean per source in
+`availability`. Each source dictionary contains:
 
 | Key | Shape | Meaning |
 |-----|-------|---------|
 | `data` | `(T, H, W)` | decoded values, NaN where invalid |
-| `source_valid` | `(T, H, W)` | the source's own validity, before rendering |
+| `source_valid` | `(T, H, W)` | positive source support on the output grid |
 | `support_mask` | `(T, H, W)` | cells whose support met the threshold |
-| `valid_mask` | `(T, H, W)` | `source_valid` and `support_mask` together |
+| `valid_mask` | `(T, H, W)` | source support, threshold, and ocean mask combined |
 | `support` | `(T, H, W)` | fraction of the output cell backed by source data |
 | `lat`, `lon` | `(H,)`, `(W,)` | geographic coordinates of the rendered grid |
 | `times` | list | the source timestamps that went into `T` |
 
-The three masks record different causes. `source_valid` marks cells where the
-instrument reported no value, `support_mask` marks cells where the renderer
-could not build one from what was reported, and `valid_mask` is the conjunction
-of the two, which is the mask a loss should use. Because the first two are kept
-separately, a cloud-flagged pixel can still be distinguished from a swath edge
-after rendering.
+For resampled scalars and vectors, `source_valid` is `support > 0` on the
+output grid. `support_mask` is true where support meets the configured
+threshold. `valid_mask` combines both with the ocean mask when present; use
+it for inputs and losses. With `Native()`, `source_valid` stays on the native
+grid. These masks describe support, not individual instrument quality flags.
 
-**Structural absence.** When a source has no asset for a position and date it
-is neither dropped nor zero-filled. The renderer returns its `empty()` form:
-`data` with shape `(0, H, W)`, masks zero, coordinates NaN, and
-`availability[token] = False`. Because the key remains present and the batch
-layout is unchanged, downstream code detects absence from the leading zero or
-from `availability` without inspecting values. Zero-filling would remove that
-distinction, since zero is itself a plausible SST anomaly.
+**Structural absence.** If no asset exists for a position and date, the renderer
+returns `empty()`: `data` has shape `(0, H, W)`, masks are zero, coordinates
+are NaN, and `availability[token] = False`. The key and batch layout remain
+present. Detect absence through the leading zero or `availability`, rather
+than through the values; zero can be a valid SST anomaly.
 
-The render below asks for 128×128 cells. `l4_sst` is natively about 23×23 over
-a 256 km patch, so this upsamples, and the library emits a warning saying so.
-The upsampling here serves a figure at display resolution. Meanwhile §2's
-`native_shape` is preserved in the payload, so the raw pixel count the data
-carries remains available."""),
+The render below requests 128×128 cells. `l4_sst` is about 23×23 natively over
+a 256 km patch, so this example upsamples for display. The library emits a
+warning. `native_shape` remains in the payload and records the raw shape."""),
         code("""
 from ocean_taco.render import Resample
 from ocean_taco.torch import OceanTACODataset
@@ -660,28 +655,59 @@ print(f"this patch spans {low:.2f} to {high:.2f} degC, a range of {high - low:.2
 """),
         md("""## 6. Collation, native shapes, and workers
 
-`collate_ocean_samples` is the collate function a `DataLoader` needs, and it
-**collates availability separately from values**. A source absent for one batch
-member changes neither the tensor layout nor the batch size, so downstream code
-reads `batch["availability"]` rather than inferring presence from a shape.
+`collate_ocean_samples` is the `DataLoader` collate function. It collates
+availability separately from values. An absent source leaves tensor layout and
+batch size unchanged; downstream code reads `batch["availability"]`.
 
-**Fixed versus native shapes.** `Resample` outputs stack directly, since every
-sample already shares a grid. `Native()` outputs do not, because shapes vary
-row by row, and stacking them requires either padding, which invents cells, or
-grouping samples that already agree. `ShapeBucketSampler` does the grouping.
+**Fixed and native shapes.** `Resample` outputs stack directly because every
+sample shares a grid. `Native()` outputs can differ by row. Stack them by
+padding or by grouping samples with matching shapes; `ShapeBucketSampler`
+performs the grouping.
 
-**Workers.** Catalog resolution happens once in the parent process, before any
-fork. `OceanTACODataset` calls `plan()` at construction to turn queries into
-resolved asset locations, so worker processes never open the catalog and fetch
-already-named assets instead. Since no worker touches the catalog,
-`num_workers > 0` is safe here, and the same design is why construction does
-visible work while `__getitem__` stays cheap. Pass
-`worker_init_fn=seed_ocean_taco_worker` whenever `num_workers > 0`,
-which the [training loader notebook](spatio_temporal_query_generation.ipynb)
-demonstrates in a running loop.
+**Workers and source access.** Keep using PyTorch `DataLoader`.
+`CoreSourceLoader` resolves catalog assets in the parent during dataset
+construction; `PlannedSourceLoader` reads those assets in workers. PyTorch
+handles batch scheduling, shuffling, and prefetching. Pass
+`worker_init_fn=seed_ocean_taco_worker` when `num_workers > 0`.
+
+**Automatic batch reuse.** PyTorch calls the dataset's `__getitems__` method
+for a batch. The built-in planned loader groups shared assets and variables
+and reuses daily crops across overlapping context/target windows, while
+returning samples in the requested order. No manual batching call is needed.
+Crop caches are cleared after each batch; custom source loaders keep their
+ordered per-item calls. ML reads project requested dense variables, while Argo
+retains its point fields.
+
+**File handles.** `CatalogConfig(max_open_files=16)` sets the default limit
+per source-loader cache in each process. Handles are reused even without
+`cache_dir`; local assets are opened in place. Fork/spawn workers start with
+fresh handles. `dataset.source_loader.close()` releases handles in the calling
+process; worker handles belong to the workers.
+
+For repeated training epochs, construct one DataLoader and reuse it:
+
+```python
+from torch.utils.data import DataLoader
+from ocean_taco.torch import collate_ocean_samples, seed_ocean_taco_worker
+
+training_loader = DataLoader(
+    dataset, batch_size=2, num_workers=2,
+    collate_fn=collate_ocean_samples,
+    worker_init_fn=seed_ocean_taco_worker,
+    persistent_workers=True, prefetch_factor=2,
+)
+```
+
+Iterate `training_loader` for each epoch to retain worker file caches. When
+using `num_workers=0`, omit `prefetch_factor` and leave `persistent_workers`
+false. The single-batch example below uses zero workers for easy inspection.
+See the [training notebook](spatio_temporal_query_generation.ipynb) and
+[throughput validation](../throughput-validation.md) for workload examples and
+measured results; worker and prefetch settings should be measured on your data.
 
 **No implicit normalisation.** The loader returns decoded values in their
-recorded units and neither centres, scales, nor fills them. §7 covers why."""),
+recorded units without centring, scaling, or filling them. Section 7 covers
+normalisation."""),
         code("""
 from torch.utils.data import DataLoader
 from ocean_taco.torch import collate_ocean_samples
@@ -863,28 +889,33 @@ print(f"draw record replays: {replay_experiment(queryset, DRAW_DIR / 'forecast-d
 """),
         md("""### The batch this query shape produces
 
-Printed offsets say what was asked for. A batch says what came back, so every
-section from here ends by building a `DataLoader` and pulling one batch.
+The offsets above retrieve data from OceanTACO into tensors with dates and shapes once a `DataLoader`
+renders them, so for illustrative purposes this section and every folloing one is building towards creating a single
+batch.
 
-Two loader settings matter and both appear in every call below.
-`collate_ocean_samples` is passed as `collate_fn` because the default PyTorch
-collation cannot stack these samples, and `seed_ocean_taco_worker` is passed as
-`worker_init_fn` because worker processes otherwise inherit one seed. §5
-returns to both, along with the third case, batching sources whose shape varies
-between rows.
+For batching, we need to account for the various different resolutions that yield different pixel sizes when retrieving a geographical extent. `collate_ocean_samples` is
+passed as `collate_fn` because the default PyTorch collation cannot stack these
+samples, and `seed_ocean_taco_worker` is passed as `worker_init_fn` because
+worker processes otherwise inherit one seed. §4 returns to both, along with
+batching sources whose shape varies between rows.
 
-The figure below is the one a forecasting setup should be judged on. The first
-two columns are the context day and the target day; the third is the
-**difference between them**, which is what the model actually has to predict.
+In the figure below, the first two columns are the context day and the target
+day, and the third is the difference between them.
 
-Each row scales to its own patch. The box reaches 45°N, so a December row in
-the north and a September row in the tropics are more than 20 °C apart, and one
-range wide enough for both renders either as a single flat shade. Scaling per
-row keeps every patch legible, at the cost that colour no longer means the same
-temperature between rows -- which is why the two columns that do compare
-directly, context and target, share one scale within each row. The difference
-column has its own symmetric range around zero, and that one is comparable
-across rows."""),
+These calls already use the optimized path: PyTorch automatically requests
+batches through `OceanTACODataset.__getitems__`, and the planned source loader
+shares asset reads and overlapping context/target daily crops within a batch.
+The file cache defaults to `CatalogConfig(max_open_files=16)` per loader and
+process, independently of `cache_dir`.
+
+`one_batch` below creates a loader for a single illustration. For repeated
+training, construct one loader outside the epoch loop and reuse it with
+`persistent_workers=True` and, for example, `prefetch_factor=2` when workers
+are enabled. With zero workers, omit prefetch and keep persistence false.
+See the [overview's worker example](ml_dataset.ipynb) and
+[throughput results](../throughput-validation.md). Batch crop caches are always
+cleared after the batch; persistent workers retain only their bounded file caches.
+"""),
         code("""
 import torch
 from torch.utils.data import DataLoader
@@ -1742,16 +1773,23 @@ if tile is not None:
 """),
         md("""## 7. Box retrieval and merge
 
-A geographic box usually spans more than one region tile, so `load_bbox_nc`
-resolves every intersecting tile, fetches each once, merges them on their
-shared coordinates, and crops the result to the box. The returned field keeps
+For a box spanning region tiles, `load_bbox_nc` resolves the intersecting
+assets and aligns their lightweight coordinate axes before selecting the box.
+It reads the requested spatial slices before reindexing and merging values,
+preserving coordinate clustering, inclusive boundaries, and wrapped longitude
+order. Overlap conflicts are checked inside the requested footprint. The returned field keeps
 its **native coordinates**, since this call retrieves rather than renders, so
 there is no target grid and no interpolation.
 
 Three return values mean three different things. `None` means no asset matched
 the request. An empty field means the asset existed and held nothing inside the
 box. Invalid coordinates or dates raise `ValueError` rather than returning
-something falsy."""),
+something falsy.
+
+Scientific retrieval keeps all source variables by default; only the ML source
+adapter projects the dense variables requested by its renderers. Shared GLORYS
+tokens therefore still expose the full file through this scientific API.
+"""),
         code("""
 from ocean_taco import TimeRange
 from ocean_taco.retrieve import load_bbox_nc, load_multisource_time_series_nc
@@ -1969,27 +2007,35 @@ print("All three share one model-facing grid, and their masks stay separate.")
 """),
         md("""## `VectorPair`: two components as one field
 
-Rendered as independent sources, an eastward and a northward velocity
-component can disagree about where they are valid: a cell ends up with a valid
-`u` and an invalid `v`, which yields a direction no measurement supports.
+When configured independently, eastward and northward velocity components can
+have different valid regions. A valid `u` with an invalid `v` does not define
+a measured vector.
 
-`VectorPair` renders both components as a unit. The result is `(T, 2, H, W)`
-rather than two `(T, H, W)` entries, `valid_mask` covers cells where **both**
-components have support, and `pair_available` is the sample-level Boolean. The
-two components come from the same underlying asset, so they are also fetched
-once rather than twice."""),
-        code("""
-vectors = {"velocity": VectorPair(Resample((64, 64), .5))}
+`VectorPair` produces both components together as `(T, 2, H, W)`. Its
+`valid_mask` requires support for both components, and `pair_available` gives
+sample-level availability. The shared asset is fetched once.
+
+For `VectorPair(Resample(...))`, `source_valid`, `support`, `support_mask`, and
+`valid_mask` all have shape `(T, H, W)` on the output grid; the component axis
+appears only in `data`. `source_valid` equals `support > 0`, with support
+computed jointly from both components. This corrects the earlier native-grid
+`source_valid` shape and allows batches with differing native shapes or missing
+records to collate. `VectorPair(Native())` keeps its native masks.
+"""),
+        code("""vectors = {"velocity": VectorPair(Resample((64, 64), .5))}
 print("components:", vectors["velocity"].components)
 velocity_sample = render(vectors)
 velocity = velocity_sample["velocity"]
 data = np.asarray(velocity["data"])
+mask_shape = (data.shape[0], *data.shape[-2:])
+for key in ("source_valid", "support", "support_mask", "valid_mask"):
+    assert tuple(velocity[key].shape) == mask_shape
+np.testing.assert_array_equal(velocity["source_valid"], np.asarray(velocity["support"]) > 0)
 if data.shape[0]:
     speed = np.hypot(data[0][0], data[0][1])
     print(f"u range=[{np.nanmin(data[:, 0]):.3f}, {np.nanmax(data[:, 0]):.3f}] m/s")
     print(f"v range=[{np.nanmin(data[:, 1]):.3f}, {np.nanmax(data[:, 1]):.3f}] m/s")
-    print(f"speed max={np.nanmax(speed):.3f} m/s, pair_available={bool(velocity['pair_available'])}")
-"""),
+    print(f"speed max={np.nanmax(speed):.3f} m/s, pair_available={bool(velocity['pair_available'])}")"""),
         code("""
 fig, axes = plt.subplots(1, 3, figsize=(14, 4), constrained_layout=True)
 # The components are signed, so they get a range symmetric about zero, which
