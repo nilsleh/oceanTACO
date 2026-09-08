@@ -21,6 +21,7 @@ class WelfordStats:
     """Compute running statistics using Welford's online algorithm (memory efficient)."""
 
     def __init__(self):
+        """Initialize an empty accumulator."""
         self.n = 0
         self.mean = 0.0
         self.M2 = 0.0  # Sum of squared differences from mean
@@ -73,6 +74,7 @@ class WelfordStats:
 
 class ReservoirSampler:
     """Collect samples using reservoir sampling for percentile computation.
+
     Memory-efficient approach that maintains a fixed-size random sample.
     """
 
@@ -140,6 +142,7 @@ def _configure_cartopy_dir(path: str):
 
 @hydra.main(version_base=None, config_path="configs", config_name="base")
 def main(cfg: DictConfig) -> None:
+    """Compute and persist normalization statistics using the Hydra configuration."""
     print("=" * 60)
     print("COMPUTE STATISTICS (Hydra)")
     print("=" * 60)

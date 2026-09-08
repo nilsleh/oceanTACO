@@ -6,7 +6,9 @@ This page explains how to generate OceanTACO from raw source data in three steps
 2. Format source data into regional NetCDF tiles + inventory (`format.py`)
 3. Build a TACO dataset from the formatted inventory (`build_taco.py`)
 
-The goal is to give you a self-contained workflow you can run and adapt.
+The formatting and TACO-build stages were verified against the published OceanTACO snapshot on a complete representative day (11 modalities across 8 regions). Start with the one-day smoke test below before scheduling a large run.
+
+> **Exemplary workflow:** the commands below show the intended download → format → TACO build flow. Enable the required source downloaders and provide their credentials before using the download step for a complete dataset.
 
 ## Prerequisites
 
@@ -36,7 +38,7 @@ The three steps use this flow:
 ## Quick End-to-End Commands
 
 ```sh
-# 1) Download raw data (dry run by default)
+# 1) Download raw data
 python ocean_taco/generate_dataset/download.py \
   --start-date 2024-01-01 \
   --end-date 2024-01-04 \
@@ -93,7 +95,7 @@ python ocean_taco/generate_dataset/download.py \
 
 ### Important Current Behavior
 
-- In the current `main()` implementation, only `L3 SSH` is actively enabled in the `download_functions` list.
+- The current default `download_functions` list activates only `L3 SSH`. Enable the remaining source download calls when using this script for complete acquisition.
 - Other dataset download calls are present but currently commented out in `download.py`.
 - The script writes structured logs and a JSON report in the log directory.
 
@@ -192,12 +194,22 @@ python ocean_taco/generate_dataset/build_taco.py \
 
 ## Recommended Workflow Patterns
 
-### 1. Safe first pass (dry run + small date range)
+### 1. Safe first pass (one complete raw-data day)
 
 ```sh
-python ocean_taco/generate_dataset/download.py --start-date 2024-01-01 --end-date 2024-01-03 --dry-run
-python ocean_taco/generate_dataset/format.py --date-min 2024-01-01 --date-max 2024-01-03 --processes 2
-python ocean_taco/generate_dataset/build_taco.py --inventory-path ./formatted_ssh_data/file_inventory.parquet
+RAW_DIR=/path/to/raw_archive
+FORMATTED_DIR=/path/to/formatted_output
+TACO_DIR=/path/to/taco_output
+
+python ocean_taco/generate_dataset/format.py \
+  --date-min 2024-01-01 --date-max 2024-01-01 \
+  --data-dir "$RAW_DIR" --output-dir "$FORMATTED_DIR" \
+  --inventory-path inventory.parquet --processes 1
+
+python ocean_taco/generate_dataset/build_taco.py \
+  --data-dir "$FORMATTED_DIR" --output-dir "$TACO_DIR" \
+  --inventory-path "$FORMATTED_DIR/inventory.parquet" \
+  --start-date 2024-01-01 --end-date 2024-01-01
 ```
 
 ### 2. Incremental updates
@@ -222,6 +234,7 @@ python ocean_taco/generate_dataset/build_taco.py \
 
 ## Troubleshooting
 
+- `--inventory-path` for `format.py` is joined to `--output-dir`. Pass a filename such as `inventory.parquet`, not a path already prefixed with the output directory.
 - If build fails, first verify `--inventory-path` exists and points to the formatted step output.
 - If output looks incomplete, confirm which data sources are currently enabled in `download.py` `download_functions`.
 - For long date ranges, start with `--weekly-batches` in download and moderate `--processes` in format.

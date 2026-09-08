@@ -42,16 +42,21 @@ def get_variable_encoding(var_name):
 
     # SST / Thetao (Degrees Celsius)
     # Range typically -2 to 35 C.
-    # Precision: 0.001 C
+    # Precision: 0.01 C -- matches the source L4 SST native int16 step (scale 0.01 K);
+    # finer scales would over-resolve already-quantised data (sub-quantisation artefact).
     if any(x in v for x in ["sst", "thetao", "temperature"]):
-        return {**base, "dtype": "int16", "scale_factor": 0.001, "add_offset": 20.0}
+        return {**base, "dtype": "int16", "scale_factor": 0.01, "add_offset": 20.0}
 
     # SSS / Salinity (PSU)
     # Some products can exceed 45 PSU (observed up to ~62.7 in SMOS fields).
     # Precision: 0.001 PSU
     # Use exact match or start/end to avoid catching 'so' within 'source' or 'solar'.
     # 'sos' = L4 SSS Copernicus variable; 'salinity' in v catches 'sea_surface_salinity' (L3 SMOS).
-    if v in ["sss", "so", "sos", "salinity"] or "salinity" in v or v.startswith("sss_") or v.endswith("_sss"):
+    # Published GLORYS ``so`` uses a distinct 0.001/25 packing scheme.  Keep
+    # that compatibility contract separate from the broader SSS convention.
+    if v == "so":
+        return {**base, "dtype": "int16", "scale_factor": 0.001, "add_offset": 25.0}
+    if v in ["sss", "sos", "salinity"] or "salinity" in v or v.startswith("sss_") or v.endswith("_sss"):
         return {**base, "dtype": "int16", "scale_factor": 0.002, "add_offset": 30.0}
 
     # Ocean Velocities (m/s)

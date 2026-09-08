@@ -247,6 +247,7 @@ def process_l4_wind_directory(
 
 
 def main():
+    """Parse command-line arguments and process hourly wind files."""
     parser = argparse.ArgumentParser(
         description="Process hourly L4 wind data to daily means with parallel processing",
         formatter_class=argparse.RawDescriptionHelpFormatter,

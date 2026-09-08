@@ -43,9 +43,12 @@ BENCHMARK_MODALITY_CONFIGS: dict[str, BenchmarkModalityConfig] = {
         dataset_name="oceantaco_l4_sst_subset",
         primary_var="analysed_sst",
         error_family="sst",
-        strict_abs_error=0.0005,
+        # Raw L4 SST (OSTIA/ODYSSEA analysed_sst) is already int16 at scale 0.01 K on
+        # disk, so the source's quantisation floor is 0.005 K. Match scale_factor=0.01
+        # and benchmark at that floor rather than inventing finer (sub-quantisation) levels.
+        strict_abs_error=0.005,
         display_name="OceanTACO L4 SST",
-        scale_factor=0.001,
+        scale_factor=0.01,
         add_offset=20.0,
     ),
     "l4_sss": BenchmarkModalityConfig(

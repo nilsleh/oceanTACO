@@ -25,7 +25,9 @@ def inspect_one_date_shapes(
     date_str: str | None = None,
     per_file_vars: int = 12,
 ) -> None:
-    """From the inventory, pick a single date and print dataset/variable shapes, dtypes,
+    """Print representative file metadata for one inventory date.
+
+    From the inventory, pick a single date and print dataset/variable shapes, dtypes,
     chunking and estimated uncompressed sizes for one representative file per
     (data_source, variable).
 
@@ -220,6 +222,7 @@ def count_swot_l3_files_per_date(json_path):
 
 
 def find_missing_l3_swot_in_catalogue(json_path, missing_dates_txt):
+    """Find dates missing from the inventory that are present in the catalogue."""
     import json
 
     import pandas as pd

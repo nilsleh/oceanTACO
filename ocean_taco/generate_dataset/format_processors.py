@@ -126,6 +126,35 @@ def make_record(
     return record
 
 
+def apply_published_metadata_compatibility(records, base_timestamp):
+    """Match published SST inventory conventions without changing payloads."""
+    l3_sst_by_region = {
+        record["region"]: record
+        for record in records
+        if record["data_source"] == "l3_sst"
+    }
+    instant_us = int(base_timestamp.timestamp() * 1_000_000)
+    spatial_fields = (
+        "bbox",
+        "_istac_spatial_wkb",
+        "resolution_deg_lat",
+        "resolution_deg_lon",
+        "resolution_km_lat",
+        "resolution_km_lon",
+    )
+
+    for record in records:
+        if record["data_source"] in {"l3_sst", "l4_sst"}:
+            record["_istac_time_start"] = instant_us
+            record["_istac_time_end"] = instant_us
+        if record["data_source"] == "l4_sst":
+            l3_sst_record = l3_sst_by_region.get(record["region"])
+            if l3_sst_record is not None:
+                for field in spatial_fields:
+                    record[field] = l3_sst_record[field]
+    return records
+
+
 def process_glorys_data(
     ds,
     date_str,
@@ -179,7 +208,7 @@ def process_glorys_data(
             if "depth" in var_da.coords:
                 var_da = var_da.drop_vars("depth")
 
-            var_da = var_da.squeeze()
+            # Keep the singleton time axis. Published OceanTACO payloads use (time=1, lat, lon).
 
             data_vars[var_key] = var_da
             encoding[var_key] = get_variable_encoding(var_key)
@@ -240,7 +269,7 @@ def process_and_split(
     if ds is None:
         return 0, []
     if "time" in ds.dims:
-        ds = ds.isel(time=0)
+        ds = ds.isel(time=slice(0, 1))
     ds = normalize_coords(ds)
     if keep_vars:
         available = [v for v in keep_vars if v in ds.data_vars]
@@ -894,7 +923,7 @@ def _process_smos_pass(file_paths, date_str, output_dir, pass_type):
         try:
             ds = xr.open_dataset(fpath)
             if "time" in ds.dims:
-                ds = ds.isel(time=0)
+                ds = ds.isel(time=slice(0, 1))
             ds = normalize_coords(ds)
 
             regional_data = split_gridded_into_regions(ds, SPATIAL_REGIONS)

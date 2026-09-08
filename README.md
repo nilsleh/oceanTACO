@@ -117,7 +117,13 @@ pip install -e ".[hf]"
 pip install -e ".[generate,hf,tests]"
 ```
 
-## Repository structure and ML workflow
+## Repository Structure
+
+- `ocean_taco/dataset/`: main user API for loading data and generating queries.
+- `ocean_taco/generate_dataset/`: data acquisition and dataset build pipeline.
+- [Dataset generation guide](docs/dataset_generation.md): exemplary download, formatting, TACO build, and smoke-test instructions.
+- `ocean_taco/viz/`: visualization and analysis scripts.
+- `notebooks/`: tutorial and task-focused notebooks.
 
 - `ocean_taco/torch/`: the shipped `OceanTACODataset`, collators, and Core loader.
 - `ocean_taco/retrieve.py`: native-coordinate catalog retrieval.
