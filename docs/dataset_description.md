@@ -18,6 +18,7 @@ Temporal indexing is daily. The core period contains 856 daily indices, and the 
 
 ---
 
+(swot-mission-phases)=
 ## SWOT Mission Phases
 
 The Core period spans two different SWOT orbits. `l3_swot` behaves very
