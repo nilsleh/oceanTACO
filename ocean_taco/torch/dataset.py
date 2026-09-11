@@ -73,6 +73,50 @@ class OceanTACODataset(Dataset):
     (or ``None``), and is constructed outside workers.  This keeps sampler,
     renderer, and access concerns independent and makes fixture testing fully
     offline.
+
+    Rows come from one of two mutually exclusive sources.  Either pass a
+    :class:`~ocean_taco.QueryDraw` as ``queries``, or pass a
+    :class:`~ocean_taco.QuerySet` together with exactly one of ``draw`` and
+    ``experiment_record``.  A bare published QuerySet is rejected: it is a
+    population, not an experiment selection.  A plain sequence of
+    :class:`PatchSpec` or row mappings is also accepted for a fully
+    caller-owned list, and then ``draw`` and ``experiment_record`` are
+    rejected in turn.
+
+    Access is likewise exclusive: provide either a callable ``source_loader``
+    or a ``catalog_config``, never both.  ``catalog_config`` constructs the
+    shipped :class:`~ocean_taco.torch.CoreSourceLoader` and, with the default
+    ``plan_sources=True``, resolves every unique asset in the parent process
+    so workers open only resolved paths or URLs.
+
+    :param queries: A ``QueryDraw``, a published ``QuerySet``, or a sequence of
+        rows.
+    :param sources: Non-empty mapping from a public source token to a renderer
+        (:class:`~ocean_taco.render.Resample`,
+        :class:`~ocean_taco.render.Native`,
+        :class:`~ocean_taco.render.Points`, or
+        :class:`~ocean_taco.render.VectorPair`).  ``VectorPair`` owns its two
+        registered components, so neither may be requested as an ordinary
+        component token.
+    :param source_loader: Callable or loader object used instead of the
+        shipped Core loader.
+    :param catalog_config: Configuration for the shipped ``CoreSourceLoader``.
+    :param patch: Optional assertion that every row declares this exact patch
+        size.
+    :param ocean_mask: Overrides the released mask for controlled tests or
+        experiments.
+    :param draw: The draw naming specific rows of a published ``QuerySet``.
+    :param experiment_record: A ``draw_queryset`` record, replayed to recover
+        the same rows.
+    :param plan_sources: Resolve catalog assets in the parent process.
+    :raises ValueError: For an empty ``sources`` mapping, a missing or
+        redundant draw selection, a draw belonging to another QuerySet, an
+        unknown source token, a vector component requested outside
+        ``VectorPair``, a renderer variable unavailable for that source, a
+        patch-size mismatch, or a footprint outside the mask domain.
+
+    An unavailable *measurement* is not an error.  It is returned as an empty
+    record of the same type with ``availability[token] == False``.
     """
 
     def __init__(
@@ -712,5 +756,13 @@ def collate_ocean_samples(
 
 
 def native_pad_collate(batch: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """DataLoader-ready opt-in dense Native collation with NaN padding."""
+    """DataLoader-ready opt-in dense Native collation with NaN padding.
+
+    Use this only for a model that explicitly accepts a padded native grid;
+    the default ragged collation of :func:`collate_ocean_samples` loses
+    nothing.  Padded records carry NaN-filled ``data``, false masks, a
+    ``spatial_padding_mask`` labelling every padded cell, a ``time_mask``, and
+    the per-item ``true_shapes``.  Padding uses NaN, so the source must be
+    floating-point.
+    """
     return collate_ocean_samples(batch, native="padded")

@@ -61,9 +61,11 @@ or use distinct published position populations.
 
 ## Published-kind split
 
-The most convenient default is one published `*-training` QuerySet for
-training and the matching `*-eval` QuerySet for evaluation. Check their
-headers and records in version control:
+The convenient default is one published `*-training` QuerySet for training and
+the matching `*-eval` QuerySet for evaluation. The two sets use different
+placement methods, which
+[ml_dataset §3](tutorials/ml_dataset.ipynb) describes and plots. Record the
+headers and IDs so the split is checkable later:
 
 ```python
 assert train.header["kind"] == "training"

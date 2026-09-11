@@ -32,6 +32,37 @@ exercise canonical coordinates, unavailable records, ragged points, collation,
 and worker planning without depending on a machine-specific data checkout.
 Do not replace them with downloaded Hugging Face assets or commit cache data.
 
+## Local throughput measurement
+
+Loader throughput depends on patch size, output grid, source mix, and worker
+count, so it is measured rather than quoted. `scripts/dev/benchmark_local_draw.py`
+runs a draw end to end against a local catalog. It is repository tooling and is
+not shipped in the wheel, and `--queryset` takes a path to a QuerySet directory
+in the checkout rather than a published set name.
+
+```bash
+python scripts/dev/benchmark_local_draw.py --taco-path /path/to/OceanTACO \
+    --queryset release/querysets/v2/256-training --grid-size 64 \
+    --workers 2 --prefetch-factor 1 --epochs 5 --persistent-workers \
+    --json-output throughput.json
+```
+
+Its defaults are 128 rows, 128 km patches, a 128 × 128 grid, and four workers.
+Useful sweeps are the published 128/256/512 km sets, grid sizes 32 through 256,
+worker counts 0/2/4/8, and prefetch factors 1 and 2. `--date-end`,
+`--context-start`, `--context-end`, and `--shuffle` vary dates and context
+windows, while `--sources` also accepts `argo` and `glorys_currents`.
+`--diagnostic-patch -90 -56 64` requests one explicit 64 km seam location and
+bypasses the coverage-backed draw; repeat the flag for further locations.
+
+The report separates QuerySet reading, drawing, planning and loader
+construction, first-batch latency, post-first-batch throughput, delivery and
+worker service latency percentiles, file opens, cache hits, and process peak
+RSS. RSS is a per-process high-water mark and includes inherited parent memory
+under fork. A short prefetched run overstates post-first-batch throughput, so
+compare complete epoch rates and repeat each measurement with identical
+settings.
+
 ## Documentation and notebooks
 
 Treat the documentation build as a warning-free check:

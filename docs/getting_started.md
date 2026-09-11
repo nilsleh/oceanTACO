@@ -68,6 +68,37 @@ The dataset resolves the catalog before worker processes start; workers read
 only resolved assets. Start with `num_workers=0` in notebooks, then benchmark
 steady-state training with a small persistent worker pool.
 
-See {doc}`dataset-workflows` for retrieval details and
-{doc}`dataset-ml-loader` for QuerySet selection, replay, and multimodal
-batches.
+Both stages are worked through with executed output in the tutorials:
+[QuerySet selection and native-coordinate
+retrieval](tutorials/data_retrieval_workflows.ipynb) for filters, coverage, and
+the retrieval functions, and [From a published QuerySet to a rendered
+sample](tutorials/ml_dataset.ipynb) for the ML path. The
+{doc}`api/index` documents every class named above.
+
+## When something looks wrong
+
+Each symptom below has a first thing to check.
+
+**Catalog access or a download fails.** Check the pinned `CatalogConfig.revision`,
+network access, the spelling of the source token, and that `cache_dir` is
+writable. Reduce to one row and `num_workers=0` before changing anything else.
+
+**A batch is entirely NaN.** Inspect `availability`, `source_valid`,
+`support_mask`, `valid_mask`, and the QuerySet's recorded coverage for those
+rows. An absent measurement is represented by NaN and a false mask, not by
+zero, so do not fill NaNs without carrying the mask alongside.
+
+**Native-grid batches collate into a ragged structure.** That is the default and
+it is deliberate, since native crops of one patch differ in shape between rows.
+Group matching shapes with `ShapeBucketSampler`, or opt into
+`collate_ocean_samples(batch, native="padded")` and consume both padding masks.
+
+**Workers hang or the loader is slow.** Keep the default `plan_sources=True` so
+the catalog is resolved in the parent, pass
+`worker_init_fn=seed_ocean_taco_worker`, and start from a small worker count.
+Set `persistent_workers=True` only when one DataLoader serves many epochs.
+
+**A replay returns different rows.** Replay needs the same QuerySet and an
+unmodified JSON record. `replay_experiment` verifies the QuerySet and table
+identity before returning rows, so a mismatch raises rather than returning
+silently different data.

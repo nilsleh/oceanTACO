@@ -71,9 +71,10 @@ If you are new to OceanTACO, start with the hosted documentation and tutorials:
 
 - Documentation home: https://oceantaco.readthedocs.io/en/latest/
 - Getting started guide: https://oceantaco.readthedocs.io/en/latest/getting_started.html
-- Dataset workflows: https://oceantaco.readthedocs.io/en/latest/dataset-workflows.html
-- ML dataset loader guide: https://oceantaco.readthedocs.io/en/latest/dataset-ml-loader.html
+- Retrieval and QuerySet selection: https://oceantaco.readthedocs.io/en/latest/tutorials/data_retrieval_workflows.html
+- ML loader entry point: https://oceantaco.readthedocs.io/en/latest/tutorials/ml_dataset.html
 - Tutorial notebooks index: https://oceantaco.readthedocs.io/en/latest/tutorials/index.html
+- API reference: https://oceantaco.readthedocs.io/en/latest/api/index.html
 
 OceanTACO includes several tutorial notebooks in the docs, with rendered outputs and downloadable `.ipynb` files, so you can get started quickly before writing your own workflows.
 
@@ -199,8 +200,8 @@ print(local_dir)
 
 For full examples (query save/load, train/eval dataloaders, patch-size recipes, and troubleshooting), see:
 
-- [Dataset workflows](https://oceantaco.readthedocs.io/en/latest/dataset-workflows.html)
 - [Tutorial notebooks](https://oceantaco.readthedocs.io/en/latest/tutorials/index.html)
+- [API reference](https://oceantaco.readthedocs.io/en/latest/api/index.html)
 
 ## CODE LICENSE
 

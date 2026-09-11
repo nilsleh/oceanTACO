@@ -16,6 +16,13 @@ class CatalogConfig:
     A revision is pinned by default.  Selecting ``main`` or a local checkout is
     explicit, so a training manifest can always record the exact catalog it
     was built against.
+
+    ``max_open_files`` bounds the per-process handle cache that each source
+    loader keeps, including for local files opened without a ``cache_dir``.
+    Normalised coordinates are cached with each handle.  Eviction, and an
+    explicit ``dataset.source_loader.close()``, release both the handles and
+    their cached coordinate views.  Fork and spawn workers each start with a
+    fresh cache.
     """
 
     repo_id: str = CORE_DATASET_REPO_ID

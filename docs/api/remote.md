@@ -1,7 +1,7 @@
 # Retrieval API
 
 The catalog/retrieval functions are in `ocean_taco.retrieve` and accept named
-`GeoBox` and `TimeRange` objects.
+{class}`~ocean_taco.GeoBox` and {class}`~ocean_taco.TimeRange` objects.
 
 `CatalogConfig` pins the Hugging Face revision by default. Its `taco_path`
 option selects a local Core catalog explicitly.
