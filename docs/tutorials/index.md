@@ -44,8 +44,7 @@ plans catalog requests in the parent and reuses cropped reads within each batch.
 `CatalogConfig(max_open_files=16)` limits each process's source-loader file cache,
 including local files opened without `cache_dir`. For repeated epochs, reuse one
 DataLoader with persistent workers; the single-batch illustrations do not need
-them. See [worker usage](ml_dataset.ipynb) and the
-[throughput validation report](../throughput-validation.md).
+them. See [worker usage](ml_dataset.ipynb).
 
 ## What each notebook covers
 
