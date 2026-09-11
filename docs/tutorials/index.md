@@ -81,11 +81,7 @@ plot_hurricane_milton_cross_product
 
 ## Editing these notebooks
 
-The `.ipynb` files are generated. `scripts/dev/restore_tutorial_notebooks.py`
-is the source of truth for their narrative and code, and edits made directly to
-a notebook are reverted the next time it runs. The generator currently differs
-from the checked-in notebooks in some workflow and prose sections, so review
-generated diffs before replacing those notebooks. Loader guidance is maintained
-in both locations. After regeneration, execute with
-`scripts/dev/execute_tutorial_notebooks.py`, which records partial
-output and a traceback into notebook metadata when a cell fails.
+The `.ipynb` files are the source of truth for their narrative and code. Edit
+them directly, then re-execute against the pinned Hugging Face revision with
+`scripts/dev/execute_tutorial_notebooks.py`, which records partial output and a
+traceback into notebook metadata when a cell fails.
