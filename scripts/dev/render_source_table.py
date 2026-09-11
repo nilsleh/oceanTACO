@@ -28,6 +28,9 @@ def render() -> str:
         "- Registry date ranges describe the data contract for this pinned Core "
         "release. A source may still have an unavailable asset or no valid "
         "measurements on a particular date/region.",
+        "- `l3_swot` is the largest such case: its orbit changes partway through "
+        "the range, and no granule is published between 2023-07-11 and "
+        "2023-07-25. See {ref}`SWOT mission phases <swot-mission-phases>`.",
         "",
         "## Sources",
         "",

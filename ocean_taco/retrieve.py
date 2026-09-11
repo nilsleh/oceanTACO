@@ -445,7 +445,14 @@ def load_bbox_nc(
     config: CatalogConfig | None = None,
     backend: LocalCacheBackend | None = None,
 ) -> object | None:
-    """Read and coordinate-merge all source tiles intersecting a GeoBox."""
+    """Read and coordinate-merge all source tiles intersecting a GeoBox.
+
+    Every intersecting Core region is merged using decoded coordinate labels,
+    not argument order, and the result is then cropped to ``box``.  Returns
+    ``None`` when no matching asset exists for that date and token.  Set
+    ``GeoBox(..., wraps_antimeridian=True)`` only for an intentionally wrapped
+    longitude interval; the flag is never inferred.
+    """
     config = config or CatalogConfig()
     when_string, filename = _date_string(when), _filename(token)
     cache = backend or _cache_for(config)

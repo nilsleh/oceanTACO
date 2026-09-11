@@ -11,29 +11,48 @@
 OceanTACO provides co-located observations of sea surface height (SSH), sea surface temperature (SST), sea surface salinity (SSS), ocean currents, wind, and Argo float profiles — organized as regional NetCDF tiles and hosted on HuggingFace.
 
 
-**Key features:**
+**Where to start:**
 
-- **Quickstart workflow**: install, query a regional tile, and plot your first map in [Getting Started](getting_started.md)
-- **Data access workflow**: browse remote files, subset by region/date, and work cloud-first via [Dataset Workflows](dataset-workflows.md)
-- **Machine learning workflow**: build training/evaluation query sets and use `OceanTACODataset` with PyTorch in [Dataset ML Loader](dataset-ml-loader.md)
-- **Data generation workflow**: reproduce formatting, tiling, and statistics with the [Dataset Generation Pipeline](dataset_generation.md)
-- **Hands-on tutorials**: run complete examples for mapping, coupling, and case studies in [Tutorials](tutorials/index.md)
+- **Install and read one subset**: [Getting Started](getting_started.md) installs the package and
+  crops a single day of SST in about ten lines.
+- **Retrieve and inspect data**: [QuerySet selection and native-coordinate
+  retrieval](tutorials/data_retrieval_workflows.ipynb) covers filters, coverage evidence, and the
+  `ocean_taco.retrieve` functions, with every cell executed against the pinned catalog.
+- **Train a model**: [From a published QuerySet to a rendered
+  sample](tutorials/ml_dataset.ipynb) is the entry point for the ML path, and links onward to the
+  [renderer reference](tutorials/ml_configuration_cookbook.ipynb) and to [forecasting,
+  super-resolution, and the training loader](tutorials/spatio_temporal_query_generation.ipynb).
+- **Reproduce the paper figures**: the two Hurricane Milton notebooks in
+  [Tutorials](tutorials/index.md) import their figure code from `ocean_taco.figures`.
+- **Regenerate the dataset**: the [Dataset Generation Pipeline](dataset_generation.md) documents
+  the download, formatting, and TACO-build steps. These use repository tooling that is not part of
+  the installed package.
 
 
 ![OceanTACO overview figure](images/fig01.png)
 
 ```{toctree}
 :maxdepth: 2
-:caption: Contents
+:caption: Using OceanTACO
 
 getting_started
-dataset-workflows
-dataset-ml-loader
-sources
-train-eval-splits
-testing
-dataset_description
-dataset_generation
 tutorials/index
 api/index
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: The dataset
+
+dataset_description
+sources
+train-eval-splits
+dataset_generation
+```
+
+```{toctree}
+:maxdepth: 1
+:caption: Development
+
+testing
 ```

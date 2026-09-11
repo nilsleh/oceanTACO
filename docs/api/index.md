@@ -4,7 +4,20 @@ The public package exposes reproducible sampling, native-coordinate retrieval,
 and the PyTorch loader.
 
 ```python
-from ocean_taco import CatalogConfig, GeoBox, PatchSize, PatchSpec, QuerySet, draw_queryset
+from ocean_taco import (
+    CatalogConfig,
+    GeoBox,
+    PatchSize,
+    PatchSpec,
+    Query,
+    QueryDraw,
+    QueryFilter,
+    QuerySet,
+    TimeRange,
+    draw_queryset,
+    replay_experiment,
+)
+from ocean_taco.render import Native, Points, Resample, VectorPair
 from ocean_taco.retrieve import load_bbox_nc, load_hf_dataset, load_tile_nc
 from ocean_taco.torch import CoreSourceLoader, OceanTACODataset, ShapeBucketSampler, collate_ocean_samples
 ```
