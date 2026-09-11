@@ -55,4 +55,5 @@ dataset_generation
 :caption: Development
 
 testing
+releasing
 ```
