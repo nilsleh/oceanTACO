@@ -10,11 +10,11 @@ OceanTACO is a multi-source oceanographic dataset covering five sea surface vari
 
 OceanTACO is released in two temporal versions to support both SWOT-era and longer pre-SWOT analyses.
 
-- **Core version:** `2023-03-29` to `2025-08-01` (spans both the SWOT calibration and science phases — see [SWOT mission phases](#swot-mission-phases) below, which changes how `l3_swot` behaves across dates).
-- **Extended version:** `2015-01-01` to `2023-03-29` (all modalities except SWOT).
+- **Core version:** `2023-03-29` to `2025-08-02` (spans both the SWOT calibration and science phases — see [SWOT mission phases](#swot-mission-phases) below, which changes how `l3_swot` behaves across dates).
+- **Extended version:** `2015-01-01` to `2023-03-29` (all modalities except SWOT) — see [Extended dataset](#extended-dataset) for how to download and use it.
 - **Shared boundary date:** both versions meet at `2023-03-29`, which allows seamless concatenation.
 
-Temporal indexing is daily. The core period contains 856 daily indices, and the extended period contains 3009 daily indices.
+Temporal indexing is daily. The core period contains 858 daily indices, and the extended period contains 3009 daily indices.
 
 ---
 
@@ -114,10 +114,10 @@ The following variables are available in OceanTACO. Use the **token** string whe
 | Token | NetCDF variable | Description | Units |
 |---|---|---|---|
 | `l4_ssh` | `sla` | L4 Sea Level Anomaly | m |
-| `l4_sst` | `analysed_sst` | L4 Sea Surface Temperature (auto-converted to °C on load) | °C |
+| `l4_sst` | `analysed_sst` | L4 Sea Surface Temperature | °C |
 | `l4_sss` | `sos` | L4 Sea Surface Salinity | PSU |
 | `l4_wind` | `eastward_wind` | L4 Eastward Wind | m/s |
-| `l3_sst` | `adjusted_sea_surface_temperature` | L3 SST | K |
+| `l3_sst` | `adjusted_sea_surface_temperature` | L3 SST | °C |
 | `l3_sss_smos_asc` | `Sea_Surface_Salinity` | L3 SMOS SSS (ascending pass) | PSU |
 | `l3_sss_smos_desc` | `Sea_Surface_Salinity` | L3 SMOS SSS (descending pass) | PSU |
 | `l3_ssh` | `sla_filtered` | L3 along-track SSH | m |
@@ -128,6 +128,8 @@ The following variables are available in OceanTACO. Use the **token** string whe
 | `glorys_sss` | `so` | GLORYS reanalysis Salinity | PSU |
 | `glorys_uo` | `uo` | GLORYS reanalysis eastward current | m/s |
 | `glorys_vo` | `vo` | GLORYS reanalysis northward current | m/s |
+
+Both SST products are stored in degrees Celsius. The conversion from Kelvin happens during dataset generation, not at load time, so values arrive in °C without any client-side conversion.
 
 ---
 
@@ -237,6 +239,47 @@ from huggingface_hub import snapshot_download
 
 local_dir = snapshot_download(repo_id="nilsleh/OceanTACO", repo_type="dataset")
 ```
+
+(extended-dataset)=
+### Extended dataset
+
+The extended version covers `2015-01-01` to `2023-03-29` and lives in a separate repository,
+`nilsleh/oceanTACO_extended`. It is distributed as seven split-tar parts,
+`extended_ocean_taco.tar.gz.aa` through `extended_ocean_taco.tar.gz.ag`, which are roughly 85.9 GB
+each except the last at 65.6 GB, for 581 GB compressed in total. Unlike Core, it is downloaded and
+extracted in full rather than streamed tile by tile.
+
+```python
+from huggingface_hub import snapshot_download
+
+local_dir = snapshot_download(repo_id="nilsleh/oceanTACO_extended", repo_type="dataset")
+```
+
+Use that repository id exactly as written, with a lowercase `o`. The capitalised form resolves only
+through an HTTP redirect.
+
+The parts concatenate in shell-glob order, so reassembly and extraction are a single pipe:
+
+```sh
+cat extended_ocean_taco.tar.gz.* | tar -xzf -
+```
+
+Plan for roughly 1.2 TB of free disk. The 581 GB of archives and the extracted tree have to coexist
+until the parts are deleted.
+
+The extracted root carries the same `COLLECTION.json`, `DATA/` and `METADATA/` layout as Core.
+Therefore, pointing `CatalogConfig` at it is enough for every retrieval and ML workflow documented
+here to apply unchanged:
+
+```python
+from ocean_taco import CatalogConfig
+
+config = CatalogConfig(taco_path="/path/to/extended")
+```
+
+The exception is `l3_swot`, which is unavailable for every extended date because the period precedes
+the SWOT mission.
+
 ---
 
 ## Licenses

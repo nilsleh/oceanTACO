@@ -40,18 +40,16 @@ Treat the documentation build as a warning-free check:
 sphinx-build -W -b html docs docs/_build/html
 ```
 
-The tutorial notebooks are generated from
-`scripts/dev/restore_tutorial_notebooks.py` and executed against the pinned
-Hugging Face revision. Regenerating clears stored outputs, so the two steps run
-together and the result is reviewed before it is committed:
+The tutorial notebooks are edited directly and executed against the pinned
+Hugging Face revision. Executing rewrites stored outputs, so the result is
+reviewed before it is committed:
 
 ```sh
-python scripts/dev/restore_tutorial_notebooks.py
 python scripts/dev/execute_tutorial_notebooks.py
 ```
 
 The executor runs with `allow_errors=True`, so a failing cell leaves its
 partial output and a traceback in the notebook's metadata for inspection
 instead of aborting the run; it returns non-zero if any cell errored. Set
-`HF_HOME` to a volume with room first. Neither script adds `docs/_build`,
+`HF_HOME` to a volume with room first. The script does not add `docs/_build`,
 notebook checkpoints, or downloaded assets to the worktree.

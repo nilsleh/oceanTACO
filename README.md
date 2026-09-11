@@ -18,7 +18,7 @@ Current dataset coverage includes:
 - Argo float profile observations (point-source)
 - Additional co-located sources including wind and GLORYS currents
 
-The Core dataset spans 2023-03-29 until 2025-08-01 and includes the SWOT data. It is available on [Hugging Face](https://huggingface.co/datasets/nilsleh/OceanTACO). The extended dataset spans 2015-01-01 until 2023-03-29 but preceeds the SWOT era and is available on [Hugging Face](https://huggingface.co/datasets/nilsleh/OceanTACO_extended).
+The Core dataset spans 2023-03-29 until 2025-08-02 and includes the SWOT data. It is available on [Hugging Face](https://huggingface.co/datasets/nilsleh/OceanTACO). The extended dataset spans 2015-01-01 until 2023-03-29 but precedes the SWOT era and is available on [Hugging Face](https://huggingface.co/datasets/nilsleh/oceanTACO_extended); see [Extended dataset](https://oceantaco.readthedocs.io/en/latest/dataset_description.html#extended-dataset) for how to download and use it.
 
 ### SWOT mission phases (read this before comparing SWOT across dates)
 
@@ -82,11 +82,7 @@ OceanTACO includes several tutorial notebooks in the docs, with rendered outputs
 Most users should install directly from PyPI:
 
 ```sh
-# Core package
 pip install oceantaco
-
-# With Hugging Face helpers
-pip install "oceantaco[hf]"
 ```
 
 If you want the latest development version from GitHub:
@@ -104,11 +100,8 @@ pip install -e .
 # Add dataset-generation dependencies (download/format/build pipeline)
 pip install -e ".[generate]"
 
-# Add Hugging Face client helpers for direct download/stream examples
-pip install -e ".[hf]"
-
 # Full development profile
-pip install -e ".[generate,hf,tests]"
+pip install -e ".[generate,tests]"
 ```
 
 ## Repository Structure
@@ -218,4 +211,20 @@ The Code is licensed under Apache - 2.0.
 OceanTACO is released under Creative Commons Attribution 4.0 International (CC BY 4.0). However, please see the [OceanTACO Dataset Card](https://huggingface.co/datasets/nilsleh/OceanTACO) for full license information, and required attribution, acknowledgements and citations.
 
 ## Citation
-In Progress.
+
+OceanTACO has been accepted for publication in Earth System Science Data. Until the final version
+appears, please cite the preprint:
+
+```bibtex
+@article{lehmann2026oceantaco,
+  author  = {Lehmann, Nils and Aybar, Cesar and Shah, Ando and Passaro, Marcello and Bamber, Jonathan L. and Zhu, Xiao Xiang},
+  title   = {{OceanTACO}: A Multi-Sensor Global Ocean Sea Surface State Dataset},
+  journal = {Earth System Science Data Discussions},
+  year    = {2026},
+  doi     = {10.5194/essd-2026-232},
+  url     = {https://essd.copernicus.org/preprints/essd-2026-232/},
+  note    = {Accepted for publication in Earth System Science Data}
+}
+```
+
+Preprint: https://essd.copernicus.org/preprints/essd-2026-232/

@@ -21,7 +21,7 @@ pip install -e ".[generate]"
 If you use conda in this repo:
 
 ```sh
-conda activate testpy311
+conda activate testpy312
 pip install -e ".[generate]"
 ```
 
