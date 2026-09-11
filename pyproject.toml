@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,14 +8,14 @@ version = "0.1.0"
 description = "Reproducible native-coordinate ocean retrieval and sampling"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "Nils Lehmann", email = "n.lehmann@tum.de" }]
 maintainers = [{ name = "Nils Lehmann", email = "n.lehmann@tum.de" }]
 keywords = ["climate", "assimilation", "earth-observation", "altimetry", "dataset", "ocean", "machine-learning"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
@@ -81,6 +81,8 @@ tutorials = [
 ]
 
 [project.urls]
+Homepage = "https://github.com/nilsleh/oceanTACO"
+Documentation = "https://oceantaco.readthedocs.io/en/latest/"
 Repository = "https://github.com/nilsleh/oceanTACO"
 Issues = "https://github.com/nilsleh/oceanTACO/issues"
 

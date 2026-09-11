@@ -3,12 +3,12 @@
 [![docs](https://app.readthedocs.org/projects/oceantaco/badge/?version=latest)](https://oceantaco.readthedocs.io/en/latest/)
 [![pypi](https://badge.fury.io/py/oceantaco.svg)](https://pypi.org/project/oceantaco/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Language: Python](https://img.shields.io/badge/language-Python%203.11%2B-green?logo=python&logoColor=green)](https://www.python.org)
+[![Language: Python](https://img.shields.io/badge/language-Python%203.12%2B-green?logo=python&logoColor=green)](https://www.python.org)
 
 
 OceanTACO is a multi-source sea surface variable dataset for Earth-system analysis workflows and also provides dataloaders for machine learning workflows.
 
-Documentation page: https://ocean-taco.readthedocs.io/en/latest/
+Documentation page: https://oceantaco.readthedocs.io/en/latest/
 
 Current dataset coverage includes:
 
@@ -52,7 +52,7 @@ region (SWOT-wide outages): `2023-05-20/21`, `2023-07-11`–`2023-07-25`,
 `2024-10-28`, `2025-01-11/12`, `2025-04-26/27`. Other modalities are unaffected on
 those dates.
 
-<img src="docs/images/swot_revisit_coverage.png" alt="SWOT coverage over a fixed box across both mission phases" width="900" />
+<img src="https://raw.githubusercontent.com/nilsleh/oceanTACO/main/docs/images/swot_revisit_coverage.png" alt="SWOT coverage over a fixed box across both mission phases" width="900" />
 
 See [Dataset Description](https://oceantaco.readthedocs.io/en/latest/dataset_description.html)
 for the per-phase figures. To regenerate them:
@@ -61,7 +61,7 @@ for the per-phase figures. To regenerate them:
 python scripts/dev/swot_phase_figures.py --out docs/images
 ```
 
-<img src="docs/images/oceantaco.svg" alt="OceanTACO Figure" width="760" />
+<img src="https://raw.githubusercontent.com/nilsleh/oceanTACO/main/docs/images/oceantaco.svg" alt="OceanTACO Figure" width="760" />
 
 Generated directly from OceanTACO sources (GLORYS SST, SSH L4, SSH SWOT, SST L4, SSS L4, Argo).
 
@@ -119,15 +119,21 @@ pip install -e ".[generate,hf,tests]"
 
 ## Repository Structure
 
-- `ocean_taco/dataset/`: main user API for loading data and generating queries.
-- `ocean_taco/generate_dataset/`: data acquisition and dataset build pipeline.
-- [Dataset generation guide](docs/dataset_generation.md): exemplary download, formatting, TACO build, and smoke-test instructions.
-- `ocean_taco/viz/`: visualization and analysis scripts.
-- `notebooks/`: tutorial and task-focused notebooks.
+The installed package:
 
-- `ocean_taco/torch/`: the shipped `OceanTACODataset`, collators, and Core loader.
 - `ocean_taco/retrieve.py`: native-coordinate catalog retrieval.
-- `ocean_taco/generate_dataset/` and `ocean_taco/viz/`: repository-only production and analysis tooling.
+- `ocean_taco/catalog.py`, `ocean_taco/geobox.py`, `ocean_taco/temporal.py`: catalog configuration and the spatial/temporal primitives.
+- `ocean_taco/queryset.py`, `ocean_taco/filter.py`, `ocean_taco/sampling/`: `QuerySet` construction, filtering, and reproducible draws.
+- `ocean_taco/render/`: renderers that turn a query into arrays, such as `Resample`.
+- `ocean_taco/torch/`: the shipped `OceanTACODataset`, collators, and Core loader.
+- `ocean_taco/access/`: source adapters for the underlying assets.
+
+Repository-only, not part of the installed package:
+
+- `ocean_taco/generate_dataset/`: data acquisition and dataset build pipeline. See the [dataset generation guide](https://oceantaco.readthedocs.io/en/latest/dataset_generation.html).
+- `ocean_taco/viz/`: visualization and analysis scripts. The two Hurricane Milton paper-figure modules under `ocean_taco/viz/paper/` are the exception and do ship, because the tutorial notebooks import them.
+- `scripts/`: QuerySet production pipeline and release checks.
+- `docs/tutorials/`: the tutorial notebooks, also rendered in the hosted docs.
 
 ML sampling starts with a published `QuerySet`, then records an exact draw:
 
@@ -165,7 +171,30 @@ OceanTACO is available at:
 
 TACO is cloud-native. Therefore, the dataset can be accessed remotely without downloading it to local disk, both for data analysis and machine learning workflows.
 
-Instead of specifying a local path to the TACO, point to the Huggingface repository
+Streaming is the default: a bare `CatalogConfig()` reads the published catalog on
+Hugging Face and fetches only the granules a query touches, caching them under
+`HF_HOME`. Nothing needs to be downloaded up front.
+
+```python
+from ocean_taco import CatalogConfig, GeoBox
+from ocean_taco.retrieve import load_bbox_nc, load_hf_dataset
+
+config = CatalogConfig()            # remote by default
+catalog = load_hf_dataset(config)
+
+sst = load_bbox_nc(
+    catalog,
+    "2024-06-01",
+    GeoBox(-80.0, -30.0, 25.0, 50.0),
+    "l4_sst",
+    config=config,
+)
+```
+
+The same applies to the ML path: pass `catalog_config=CatalogConfig()` to
+`OceanTACODataset`, as in the quickstart above, and batches stream from the Hub.
+To read a local copy instead, point at the `OceanTACO` directory itself with
+`CatalogConfig(taco_path="/path/to/OceanTACO")`.
 
 
 ### Download snapshot locally (huggingface_hub)
@@ -181,8 +210,8 @@ print(local_dir)
 
 For full examples (query save/load, train/eval dataloaders, patch-size recipes, and troubleshooting), see:
 
-- `docs/dataset-workflows.md`
-- `docs/tutorials/index.md`
+- [Dataset workflows](https://oceantaco.readthedocs.io/en/latest/dataset-workflows.html)
+- [Tutorial notebooks](https://oceantaco.readthedocs.io/en/latest/tutorials/index.html)
 
 ## CODE LICENSE
 

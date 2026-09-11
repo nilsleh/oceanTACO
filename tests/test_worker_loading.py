@@ -22,12 +22,10 @@ from ocean_taco.torch import OceanTACODataset, seed_ocean_taco_worker
 from ocean_taco.torch import loader as loader_module
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCAL_PORT = Path(
-    os.environ.get(
-        "OCEANTACO_LOCAL_PORT",
-        ROOT / "results/generation_audit_20260828/port_20230329_verified/taco/OceanTACO",
-    )
-)
+# The verified local Core port is machine-specific: point OCEANTACO_LOCAL_PORT
+# at it to run the `local` tier. Without it these tests skip.
+_LOCAL_PORT_ENV = os.environ.get("OCEANTACO_LOCAL_PORT")
+LOCAL_PORT = Path(_LOCAL_PORT_ENV) if _LOCAL_PORT_ENV else None
 
 
 def _mask() -> OceanMaskArtifact:
@@ -139,7 +137,7 @@ def test_planned_loader_constructs_the_catalog_once_and_workers_match_parent(
 @pytest.mark.local
 def test_warm_parent_worker_loading_does_not_crash(tmp_path):
     """Keep the crash-prone ordering in a subprocess so a SIGSEGV is reportable."""
-    if not LOCAL_PORT.is_dir():
+    if LOCAL_PORT is None or not LOCAL_PORT.is_dir():
         pytest.skip("local verified OceanTACO port is not available")
     script = """
 from pathlib import Path

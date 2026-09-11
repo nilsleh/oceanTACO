@@ -6,7 +6,7 @@ repository root after activating the project environment and clearing an
 inherited `PYTHONPATH`.
 
 ```sh
-source /p/project1/hai_uqmethodbox/nils/oceanTACO/sc-venv-template-uv/activate.sh
+source /path/to/venv/bin/activate
 unset PYTHONPATH
 pytest tests -q
 ```

@@ -13,7 +13,18 @@ from ocean_taco.filter import CoverageRequirement, QueryFilter, select_queryset
 from ocean_taco.queryset import QuerySet
 from ocean_taco.sampling.ocean_mask import load_released_ocean_mask
 from ocean_taco.sampling.publish import build_positions
-from scripts.release.validate_release_evidence import REFERENCE_SETS
+
+# Published position counts for the six released training/eval QuerySets, keyed
+# by set name as (patch size, kind, expected position count). These are the
+# reference values this check compares the published grids against.
+REFERENCE_SETS = {
+    "128-training": (128, "training", 44_227),
+    "128-eval": (128, "eval", 24_289),
+    "256-training": (256, "training", 11_010),
+    "256-eval": (256, "eval", 6_043),
+    "512-training": (512, "training", 2_722),
+    "512-eval": (512, "eval", 1_482),
+}
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument(
