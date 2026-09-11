@@ -32,7 +32,6 @@ dataset-ml-loader
 sources
 train-eval-splits
 testing
-throughput-validation
 dataset_description
 dataset_generation
 tutorials/index

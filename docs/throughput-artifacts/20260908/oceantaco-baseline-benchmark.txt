@@ -1,22 +1,0 @@
-Drawing 128 rows from 128-training with 16-sample batches and 4 workers.
-Local data: /p/project1/hai_uqmethodbox/nils/oceanTACO/results/generation_audit_20260828/port_20230329_verified/taco/OceanTACO
-Sources: l3_ssh, l3_swot
-/tmp/oceantaco-throughput-baseline/ocean_taco/torch/dataset.py:299: UserWarning: l3_ssh is being upsampled 7.1x from native shape (18, 25); native shape is recorded in sample metadata.
-  rendered = request.renderer.render(
-/tmp/oceantaco-throughput-baseline/ocean_taco/torch/dataset.py:299: UserWarning: l3_ssh is being upsampled 7.5x from native shape (18, 17); native shape is recorded in sample metadata.
-  rendered = request.renderer.render(
-/tmp/oceantaco-throughput-baseline/ocean_taco/torch/dataset.py:299: UserWarning: l3_ssh is being upsampled 9.1x from native shape (18, 14); native shape is recorded in sample metadata.
-  rendered = request.renderer.render(
-/tmp/oceantaco-throughput-baseline/ocean_taco/torch/dataset.py:299: UserWarning: l3_ssh is being upsampled 7.1x from native shape (18, 21); native shape is recorded in sample metadata.
-  rendered = request.renderer.render(
-/tmp/oceantaco-throughput-baseline/ocean_taco/torch/dataset.py:299: UserWarning: l3_swot is being upsampled 2.2x from native shape (64, 58); native shape is recorded in sample metadata.
-  rendered = request.renderer.render(
-/tmp/oceantaco-throughput-baseline/ocean_taco/torch/dataset.py:299: UserWarning: l3_swot is being upsampled 2.6x from native shape (64, 50); native shape is recorded in sample metadata.
-  rendered = request.renderer.render(
-/tmp/oceantaco-throughput-baseline/ocean_taco/torch/dataset.py:299: UserWarning: l3_swot is being upsampled 2.0x from native shape (63, 81); native shape is recorded in sample metadata.
-  rendered = request.renderer.render(
-/tmp/oceantaco-throughput-baseline/ocean_taco/torch/dataset.py:299: UserWarning: l3_swot is being upsampled 2.0x from native shape (64, 63); native shape is recorded in sample metadata.
-  rendered = request.renderer.render(
-Drawing batches [####------------------------] 1/8 (0.0 samples/s)Drawing batches [#######---------------------] 2/8 (0.1 samples/s)Drawing batches [##########------------------] 3/8 (0.1 samples/s)Drawing batches [##############--------------] 4/8 (0.1 samples/s)Drawing batches [##################----------] 5/8 (0.1 samples/s)Drawing batches [#####################-------] 6/8 (0.2 samples/s)Drawing batches [########################----] 7/8 (0.1 samples/s)Drawing batches [############################] 8/8 (0.1 samples/s)
-128 samples in 56.09s: 2.28 samples/s (0.14 batches/s)
-Available samples: l3_ssh=128, l3_swot=128

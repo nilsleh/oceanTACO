@@ -701,9 +701,8 @@ training_loader = DataLoader(
 Iterate `training_loader` for each epoch to retain worker file caches. When
 using `num_workers=0`, omit `prefetch_factor` and leave `persistent_workers`
 false. The single-batch example below uses zero workers for easy inspection.
-See the [training notebook](spatio_temporal_query_generation.ipynb) and
-[throughput validation](../throughput-validation.md) for workload examples and
-measured results; worker and prefetch settings should be measured on your data.
+See the [training notebook](spatio_temporal_query_generation.ipynb) for
+workload examples; worker and prefetch settings should be measured on your data.
 
 **No implicit normalisation.** The loader returns decoded values in their
 recorded units without centring, scaling, or filling them. Section 7 covers
@@ -912,9 +911,9 @@ process, independently of `cache_dir`.
 training, construct one loader outside the epoch loop and reuse it with
 `persistent_workers=True` and, for example, `prefetch_factor=2` when workers
 are enabled. With zero workers, omit prefetch and keep persistence false.
-See the [overview's worker example](ml_dataset.ipynb) and
-[throughput results](../throughput-validation.md). Batch crop caches are always
-cleared after the batch; persistent workers retain only their bounded file caches.
+See the [overview's worker example](ml_dataset.ipynb). Batch crop caches are
+always cleared after the batch; persistent workers retain only their bounded
+file caches.
 """),
         code("""
 import torch

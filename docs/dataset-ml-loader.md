@@ -121,9 +121,6 @@ RSS. RSS is a per-process high-water mark and includes inherited parent memory
 under fork. A short prefetched run can overstate post-first-batch throughput;
 compare complete epoch rates and repeat measurements with the same settings.
 
-Measured results, validation scope, and reproducible artifacts are in the
-[throughput validation report](throughput-validation.md).
-
 ## Sample schema and collation
 
 Each sample is a flat mapping keyed by the requested source name, plus `query`
