@@ -87,10 +87,12 @@ Repository = "https://github.com/nilsleh/oceanTACO"
 Issues = "https://github.com/nilsleh/oceanTACO/issues"
 
 [tool.uv.build-backend]
-# The distribution is `oceantaco` but the import package is `ocean_taco`, so the
-# backend cannot derive one from the other. This is the only packaging setting
-# the project needs: `src/ocean_taco/` is the wheel verbatim, and any future
-# need for an exclusion rule means repository-only code has crept into `src/`.
+# The package sits at the repository root rather than under `src/`, and the
+# distribution is `oceantaco` while the import package is `ocean_taco`, so the
+# backend can derive neither from the other. These two keys are the whole
+# packaging configuration: `ocean_taco/` is the wheel verbatim, and any future
+# need for an exclusion rule means repository-only code has crept into it.
+module-root = ""
 module-name = "ocean_taco"
 
 [tool.pytest.ini_options]

@@ -32,7 +32,7 @@ jobs:
       # tools/ and the dev scripts carry ~650 pre-existing findings, and gating
       # this PR check on that backlog would block every unrelated change.
       - name: Lint shipped surface
-        run: ruff check --no-fix src tests
+        run: ruff check --no-fix ocean_taco tests
 
       - name: Run offline test suite
         # The default addopts deselect `slow`, so this stays network-free.

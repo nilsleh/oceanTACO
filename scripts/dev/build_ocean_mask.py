@@ -12,7 +12,7 @@ from ocean_taco.retrieve import _REGION_BOUNDS, load_hf_dataset, load_tile_nc
 from ocean_taco.sampling import build_ocean_mask
 
 MASK_DATE = "2024-06-01"
-DEFAULT_OUTPUT = Path("src/ocean_taco/sampling/data/ocean_mask_0p1deg_60S_60N.npz")
+DEFAULT_OUTPUT = Path("ocean_taco/sampling/data/ocean_mask_0p1deg_60S_60N.npz")
 
 
 def build(*, output: Path, cache_dir: Path | None = None) -> Path:
