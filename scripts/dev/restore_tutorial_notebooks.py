@@ -2252,7 +2252,7 @@ is always requested; a missing source is shown as missing rather than hidden."""
         code("""
 from ocean_taco import CatalogConfig
 from ocean_taco.retrieve import load_hf_dataset
-from ocean_taco.viz.paper.plot_hurricane_milton import DEFAULT_DATES, close_data, load_date, make_figure
+from ocean_taco.figures.hurricane_milton import DEFAULT_DATES, close_data, load_date, make_figure
 config = CatalogConfig()
 catalog = load_hf_dataset(config)
 print(f"catalog={config.resolved_catalog_url}; revision={config.revision}; dates={DEFAULT_DATES}")
@@ -2291,7 +2291,7 @@ correlation, RMSE, and a 1:1 reference line."""),
         code("""
 from ocean_taco import CatalogConfig
 from ocean_taco.retrieve import load_hf_dataset
-from ocean_taco.viz.paper.plot_hurricane_milton_cross_product import close_products, load_products, make_figure
+from ocean_taco.figures.hurricane_milton_cross_product import close_products, load_products, make_figure
 DATE = "2024-10-09"
 config = CatalogConfig()
 catalog = load_hf_dataset(config)

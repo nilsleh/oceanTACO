@@ -5,8 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import xarray as xr
-
-from ocean_taco.generate_dataset.format_processors import (
+from ocean_taco_generate.format_processors import (
     apply_published_metadata_compatibility,
     process_and_split,
     process_glorys_data,

@@ -28,18 +28,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[tests,viz]"
 
-      # Scoped to the shipped package and tests: generate_dataset/ and the
-      # dev scripts carry ~650 pre-existing findings, and gating this PR check
-      # on that backlog would block every unrelated change. Widen the paths as
-      # those directories are cleaned up.
+      # Scoped to the shipped package and tests. The repository-only code in
+      # tools/ and the dev scripts carry ~650 pre-existing findings, and gating
+      # this PR check on that backlog would block every unrelated change.
       - name: Lint shipped surface
-        run: |
-          ruff check --no-fix \
-            ocean_taco/access ocean_taco/render ocean_taco/sampling ocean_taco/torch \
-            ocean_taco/__init__.py ocean_taco/catalog.py ocean_taco/filter.py \
-            ocean_taco/geobox.py ocean_taco/plot.py ocean_taco/queryset.py \
-            ocean_taco/registry.py ocean_taco/retrieve.py ocean_taco/temporal.py \
-            tests
+        run: ruff check --no-fix src tests
 
       - name: Run offline test suite
         # The default addopts deselect `slow`, so this stays network-free.

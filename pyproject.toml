@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=77"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
 
 [project]
 name = "oceantaco"
@@ -86,23 +86,12 @@ Documentation = "https://oceantaco.readthedocs.io/en/latest/"
 Repository = "https://github.com/nilsleh/oceanTACO"
 Issues = "https://github.com/nilsleh/oceanTACO/issues"
 
-[tool.setuptools]
-include-package-data = false
-
-[tool.setuptools.packages.find]
-# Search from repo root (.) and include the ocean_taco package
-where = ["."]
-include = ["ocean_taco*"]
-exclude = [
-    "ocean_taco.benchmarks*",
-    "ocean_taco.dataset*",
-    "ocean_taco.generate_dataset*",
-    "ocean_taco.test*",
-    "tests*",
-]
-
-[tool.setuptools.package-data]
-ocean_taco = ["py.typed", "sampling/data/*.npz"]
+[tool.uv.build-backend]
+# The distribution is `oceantaco` but the import package is `ocean_taco`, so the
+# backend cannot derive one from the other. This is the only packaging setting
+# the project needs: `src/ocean_taco/` is the wheel verbatim, and any future
+# need for an exclusion rule means repository-only code has crept into `src/`.
+module-name = "ocean_taco"
 
 [tool.pytest.ini_options]
 addopts = "-m 'not slow and not remote'"

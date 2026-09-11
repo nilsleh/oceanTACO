@@ -1,5 +1,0 @@
-# The test suite is not shipped in the sdist: collecting it needs the guards in
-# `tests/conftest.py` and the repository's `scripts/` package, neither of which
-# belongs in a distribution. The tests stay in the git repository, where CI
-# runs them.
-prune tests

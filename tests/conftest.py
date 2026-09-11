@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import os
 import socket
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from ocean_taco import CatalogConfig
-from ocean_taco.sampling import OceanMaskArtifact
+# `tools/` holds repository-only packages that are never shipped in the wheel,
+# so they are importable only from a checkout. Putting the path here makes it
+# the single mechanism for the whole suite; CI sets no PYTHONPATH of its own.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+
+from ocean_taco import CatalogConfig  # noqa: E402
+from ocean_taco.sampling import OceanMaskArtifact  # noqa: E402
 
 
 def _local_port_path() -> Path | None:

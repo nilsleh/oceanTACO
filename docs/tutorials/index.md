@@ -62,14 +62,10 @@ other three.
 ## The Hurricane Milton notebooks
 
 The last two notebooks are visualization reproductions. They import their
-figure code from `ocean_taco.viz.paper`, which ships with the package, and they
+figure code from `ocean_taco.figures`, which ships with the package, and they
 draw with matplotlib and cartopy, which are core dependencies. So they need
 nothing beyond the install above; `[tutorials]` itself only adds JupyterLab
 and the notebook execution tooling.
-
-Note that `ocean_taco.viz.paper` ships only these two figure modules; the rest
-of `ocean_taco.viz` is repository-only tooling and is not part of the installed
-package.
 
 ```{toctree}
 :maxdepth: 1

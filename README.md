@@ -65,12 +65,6 @@ python scripts/dev/swot_phase_figures.py --out docs/images
 
 Generated directly from OceanTACO sources (GLORYS SST, SSH L4, SSH SWOT, SST L4, SSS L4, Argo).
 
-To regenerate the README figure:
-
-```sh
-python ocean_taco/viz/readme_figure.py --date 2025-03-04
-```
-
 ## Documentation and Notebooks
 
 If you are new to OceanTACO, start with the hosted documentation and tutorials:
@@ -119,19 +113,21 @@ pip install -e ".[generate,hf,tests]"
 
 ## Repository Structure
 
-The installed package:
+Everything under `src/ocean_taco/` is installed, and nothing else is:
 
-- `ocean_taco/retrieve.py`: native-coordinate catalog retrieval.
-- `ocean_taco/catalog.py`, `ocean_taco/geobox.py`, `ocean_taco/temporal.py`: catalog configuration and the spatial/temporal primitives.
-- `ocean_taco/queryset.py`, `ocean_taco/filter.py`, `ocean_taco/sampling/`: `QuerySet` construction, filtering, and reproducible draws.
-- `ocean_taco/render/`: renderers that turn a query into arrays, such as `Resample`.
-- `ocean_taco/torch/`: the shipped `OceanTACODataset`, collators, and Core loader.
-- `ocean_taco/access/`: source adapters for the underlying assets.
+- `src/ocean_taco/retrieve.py`: native-coordinate catalog retrieval.
+- `src/ocean_taco/catalog.py`, `src/ocean_taco/geobox.py`, `src/ocean_taco/temporal.py`: catalog configuration and the spatial/temporal primitives.
+- `src/ocean_taco/queryset.py`, `src/ocean_taco/filter.py`, `src/ocean_taco/sampling/`: `QuerySet` construction, filtering, and reproducible draws.
+- `src/ocean_taco/render/`: renderers that turn a query into arrays, such as `Resample`.
+- `src/ocean_taco/torch/`: the shipped `OceanTACODataset`, collators, and Core loader.
+- `src/ocean_taco/access/`: source adapters for the underlying assets.
+- `src/ocean_taco/figures/`: the Hurricane Milton figure modules the tutorial notebooks import, and the QuerySet diagnostic maps.
 
 Repository-only, not part of the installed package:
 
-- `ocean_taco/generate_dataset/`: data acquisition and dataset build pipeline. See the [dataset generation guide](https://oceantaco.readthedocs.io/en/latest/dataset_generation.html).
-- `ocean_taco/viz/`: visualization and analysis scripts. The two Hurricane Milton paper-figure modules under `ocean_taco/viz/paper/` are the exception and do ship, because the tutorial notebooks import them.
+- `tools/ocean_taco_generate/`: data acquisition and dataset build pipeline. See the [dataset generation guide](https://oceantaco.readthedocs.io/en/latest/dataset_generation.html).
+- `tools/ocean_taco_benchmarks/`: the ClimateBenchPress comparison pipeline.
+- `tools/ocean_taco_figures_wip/`: paper-figure code that no longer runs against the current API, kept for possible revival.
 - `scripts/`: QuerySet production pipeline and release checks.
 - `docs/tutorials/`: the tutorial notebooks, also rendered in the hosted docs.
 
