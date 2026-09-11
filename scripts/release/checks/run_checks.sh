@@ -33,7 +33,7 @@ python scripts/release/checks/spot_check_published.py --root "${ROOT}"
 
 echo "=========== MAP REPORTS ==========="
 for s in 512 256 128; do
-  python -m ocean_taco.viz.queryset_maps \
+  python -m ocean_taco.figures.queryset_maps \
     --train "${ROOT}/$s-training" --eval "${ROOT}/$s-eval" \
     --output "${ROOT}/queryset-map-$s.pdf"
 done

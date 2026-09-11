@@ -39,14 +39,14 @@ The three steps use this flow:
 
 ```sh
 # 1) Download raw data
-python ocean_taco/generate_dataset/download.py \
+python tools/ocean_taco_generate/download.py \
   --start-date 2024-01-01 \
   --end-date 2024-01-04 \
   --output-dir ./ssh_state_data \
   --download
 
 # 2) Format into regional NetCDF + inventory parquet
-python ocean_taco/generate_dataset/format.py \
+python tools/ocean_taco_generate/format.py \
   --date-min 2024-01-01 \
   --date-max 2024-01-04 \
   --data-dir ./ssh_state_data \
@@ -55,7 +55,7 @@ python ocean_taco/generate_dataset/format.py \
   --processes 4
 
 # 3) Build TACO from formatted files
-python ocean_taco/generate_dataset/build_taco.py \
+python tools/ocean_taco_generate/build_taco.py \
   --data-dir ./formatted_ssh_data \
   --output-dir ./tortilla \
   --inventory-path ./formatted_ssh_data/file_inventory.parquet
@@ -65,12 +65,12 @@ python ocean_taco/generate_dataset/build_taco.py \
 
 Script:
 
-- `ocean_taco/generate_dataset/download.py`
+- `tools/ocean_taco_generate/download.py`
 
 Example:
 
 ```sh
-python ocean_taco/generate_dataset/download.py \
+python tools/ocean_taco_generate/download.py \
   --start-date 2024-01-01 \
   --end-date 2024-01-31 \
   --output-dir ./ssh_state_data \
@@ -103,7 +103,7 @@ python ocean_taco/generate_dataset/download.py \
 
 Script:
 
-- `ocean_taco/generate_dataset/format.py`
+- `tools/ocean_taco_generate/format.py`
 
 This step:
 
@@ -115,7 +115,7 @@ This step:
 Example:
 
 ```sh
-python ocean_taco/generate_dataset/format.py \
+python tools/ocean_taco_generate/format.py \
   --date-min 2024-01-01 \
   --date-max 2024-01-31 \
   --data-dir ./ssh_state_data \
@@ -159,7 +159,7 @@ By default that is:
 
 Script:
 
-- `ocean_taco/generate_dataset/build_taco.py`
+- `tools/ocean_taco_generate/build_taco.py`
 
 This step:
 
@@ -171,7 +171,7 @@ This step:
 Example:
 
 ```sh
-python ocean_taco/generate_dataset/build_taco.py \
+python tools/ocean_taco_generate/build_taco.py \
   --data-dir ./formatted_ssh_data \
   --output-dir ./tortilla \
   --inventory-path ./formatted_ssh_data/file_inventory.parquet
@@ -201,12 +201,12 @@ RAW_DIR=/path/to/raw_archive
 FORMATTED_DIR=/path/to/formatted_output
 TACO_DIR=/path/to/taco_output
 
-python ocean_taco/generate_dataset/format.py \
+python tools/ocean_taco_generate/format.py \
   --date-min 2024-01-01 --date-max 2024-01-01 \
   --data-dir "$RAW_DIR" --output-dir "$FORMATTED_DIR" \
   --inventory-path inventory.parquet --processes 1
 
-python ocean_taco/generate_dataset/build_taco.py \
+python tools/ocean_taco_generate/build_taco.py \
   --data-dir "$FORMATTED_DIR" --output-dir "$TACO_DIR" \
   --inventory-path "$FORMATTED_DIR/inventory.parquet" \
   --start-date 2024-01-01 --end-date 2024-01-01
@@ -217,7 +217,7 @@ python ocean_taco/generate_dataset/build_taco.py \
 If you rerun formatting for a new date window and want to keep old inventory entries:
 
 ```sh
-python ocean_taco/generate_dataset/format.py \
+python tools/ocean_taco_generate/format.py \
   --date-min 2024-02-01 \
   --date-max 2024-02-07 \
   --update-existing-inventory
@@ -226,7 +226,7 @@ python ocean_taco/generate_dataset/format.py \
 ### 3. Duplicate investigation before build
 
 ```sh
-python ocean_taco/generate_dataset/build_taco.py \
+python tools/ocean_taco_generate/build_taco.py \
   --inventory-path ./formatted_ssh_data/file_inventory.parquet \
   --analyze-duplicates-only \
   --duplicate-report-path ./reports/duplicates.parquet

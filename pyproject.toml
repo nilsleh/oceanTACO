@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
 
 [project]
 name = "oceantaco"
@@ -8,14 +8,14 @@ version = "0.1.0"
 description = "Reproducible native-coordinate ocean retrieval and sampling"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "Nils Lehmann", email = "n.lehmann@tum.de" }]
 maintainers = [{ name = "Nils Lehmann", email = "n.lehmann@tum.de" }]
 keywords = ["climate", "assimilation", "earth-observation", "altimetry", "dataset", "ocean", "machine-learning"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
@@ -81,26 +81,19 @@ tutorials = [
 ]
 
 [project.urls]
+Homepage = "https://github.com/nilsleh/oceanTACO"
+Documentation = "https://oceantaco.readthedocs.io/en/latest/"
 Repository = "https://github.com/nilsleh/oceanTACO"
 Issues = "https://github.com/nilsleh/oceanTACO/issues"
 
-[tool.setuptools]
-include-package-data = false
-
-[tool.setuptools.packages.find]
-# Search from repo root (.) and include the ocean_taco package
-where = ["."]
-include = ["ocean_taco*"]
-exclude = [
-    "ocean_taco.benchmarks*",
-    "ocean_taco.dataset*",
-    "ocean_taco.generate_dataset*",
-    "ocean_taco.test*",
-    "tests*",
-]
-
-[tool.setuptools.package-data]
-ocean_taco = ["py.typed", "sampling/data/*.npz"]
+[tool.uv.build-backend]
+# The package sits at the repository root rather than under `src/`, and the
+# distribution is `oceantaco` while the import package is `ocean_taco`, so the
+# backend can derive neither from the other. These two keys are the whole
+# packaging configuration: `ocean_taco/` is the wheel verbatim, and any future
+# need for an exclusion rule means repository-only code has crept into it.
+module-root = ""
+module-name = "ocean_taco"
 
 [tool.pytest.ini_options]
 addopts = "-m 'not slow and not remote'"

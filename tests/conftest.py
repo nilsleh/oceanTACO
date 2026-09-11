@@ -4,22 +4,29 @@ from __future__ import annotations
 
 import os
 import socket
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from ocean_taco import CatalogConfig
-from ocean_taco.sampling import OceanMaskArtifact
+# `tools/` holds repository-only packages that are never shipped in the wheel,
+# so they are importable only from a checkout. Putting the path here makes it
+# the single mechanism for the whole suite; CI sets no PYTHONPATH of its own.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+
+from ocean_taco import CatalogConfig  # noqa: E402
+from ocean_taco.sampling import OceanMaskArtifact  # noqa: E402
 
 
-def _local_port_path() -> Path:
-    """Resolve the optional verified local Core port from the environment."""
-    default = (
-        Path(__file__).parents[1]
-        / "results/generation_audit_20260828/port_20230329_verified/taco/OceanTACO"
-    )
-    return Path(os.environ.get("OCEANTACO_LOCAL_PORT", default))
+def _local_port_path() -> Path | None:
+    """Resolve the optional verified local Core port from the environment.
+
+    The port is machine-specific, so there is no meaningful default: point
+    OCEANTACO_LOCAL_PORT at a verified port to run the `local` tier.
+    """
+    value = os.environ.get("OCEANTACO_LOCAL_PORT")
+    return Path(value) if value else None
 
 
 def _remote_available() -> bool:
@@ -33,7 +40,8 @@ def _remote_available() -> bool:
 
 def pytest_collection_modifyitems(config, items) -> None:
     """Skip opt-in integration tiers cleanly when their prerequisite is absent."""
-    local_missing = not _local_port_path().is_dir()
+    _local_port = _local_port_path()
+    local_missing = _local_port is None or not _local_port.is_dir()
     remote_available = (
         _remote_available()
         if any(item.get_closest_marker("remote") for item in items)
@@ -71,7 +79,7 @@ def ocean_mask() -> OceanMaskArtifact:
 def local_port() -> Path:
     """Verified one-day local Core port, or a clear tier skip."""
     port = _local_port_path()
-    if not port.is_dir():
+    if port is None or not port.is_dir():
         pytest.skip("OCEANTACO_LOCAL_PORT is not available")
     return port
 

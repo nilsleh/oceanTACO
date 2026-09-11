@@ -22,7 +22,7 @@ jobs:
         run: python -m pip install -e ".[generate,tests]"
 
       - name: Lint generator code
-        run: ruff check ocean_taco/generate_dataset tests/generate_dataset
+        run: ruff check tools/ocean_taco_generate tests/generate_dataset
 
       - name: Run generator regression tests
         run: pytest -q tests/generate_dataset

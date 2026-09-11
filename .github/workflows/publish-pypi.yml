@@ -18,12 +18,30 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          # Must match `requires-python` in pyproject.toml.
+          python-version: "3.12"
 
       - name: Build package distributions
         run: |
           python -m pip install --upgrade pip build
           python -m build
+
+      - name: Check distribution metadata
+        run: |
+          python -m pip install --upgrade twine
+          twine check dist/*
+
+      - name: Smoke install the built wheel
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/python -m pip install --upgrade pip
+          /tmp/smoke/bin/python -m pip install dist/*.whl
+          /tmp/smoke/bin/python -c "import ocean_taco; print(ocean_taco.__version__)"
+          # The figures subpackage is shipped but otherwise untested from a wheel.
+          /tmp/smoke/bin/python -c "import ocean_taco.figures.hurricane_milton, ocean_taco.figures.hurricane_milton_cross_product, ocean_taco.figures.queryset_maps"
+          # Stray repository-only files must never reach the wheel; the shipped
+          # package is ~142 KB, so anything near this bound means something crept in.
+          python -c "import pathlib,sys; w=sorted(pathlib.Path('dist').glob('*.whl'))[0]; s=w.stat().st_size; print(w.name, s); sys.exit(s >= 400000)"
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
